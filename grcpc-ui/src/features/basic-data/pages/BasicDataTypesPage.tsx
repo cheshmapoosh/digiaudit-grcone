@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Bar, Button, FlexBox, Form, FormItem, Label, MessageStrip, ObjectStatus, Table, TableCell, TableHeaderCell, TableHeaderRow, TableRow, TableSelectionSingle, Text, Title } from "@ui5/webcomponents-react";
-import { useAuthState } from "@/features/auth";
 import { currentProfile, useProfileState } from "@/features/dataset-profile/state/profile.state";
 import { HeaderSearch } from "@/shared/components/HeaderSearch";
 import { ManagementDetailDialog } from "@/shared/components/ManagementDetailDialog";
@@ -16,7 +15,6 @@ export default function BasicDataTypesPage({ kind }: { kind: BasicDataKind }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { typeId } = useParams();
-  const multiProfileEnabled = useAuthState((state) => state.me?.multiProfileEnabled !== false);
   useProfileState((state) => state.profiles);
   const profile = currentProfile();
   const writable = profile?.status === "ACTIVE";
@@ -63,18 +61,15 @@ export default function BasicDataTypesPage({ kind }: { kind: BasicDataKind }) {
         <Button disabled={busy || loading || !selected || !writable} onClick={() => void perform(selected?.status === "ACTIVE" ? "inactivate" : "activate")}>{t(selected?.status === "INACTIVE" ? "profile.activate" : "profile.inactivate")}</Button>
         <Button design="Negative" disabled={busy || loading || !selected || !writable} onClick={() => setDeleteOpen(true)}>{t("common.delete")}</Button>
       </>} />
-      {multiProfileEnabled ? <Text>{t("basicData.profile")}: {profile?.name ?? "—"}</Text> : null}
       {error ? <MessageStrip design="Negative" hideCloseButton>{error}</MessageStrip> : null}
       <Table loading={loading || busy} noDataText={t("basicData.empty")} accessibleName={t(`basicData.${kind}.title`)} overflowMode="Popin"
         features={<TableSelectionSingle selected={activeId ?? undefined} behavior="RowOnly" onChange={(event) => { if (!busy && !loading) setSelectedId(event.target.selected ?? null); }} />}
         headerRow={<TableHeaderRow>
           <TableHeaderCell>{t("basicData.name")}</TableHeaderCell><TableHeaderCell>{t("basicData.description")}</TableHeaderCell>
-          {multiProfileEnabled ? <TableHeaderCell>{t("basicData.profile")}</TableHeaderCell> : null}
           <TableHeaderCell>{t("common.status")}</TableHeaderCell>
         </TableHeaderRow>}>
         {visible.map((row) => <TableRow key={row.id} rowKey={row.id} interactive={!busy} navigated={activeId === row.id}>
           <TableCell><Text>{row.name}</Text></TableCell><TableCell><Text maxLines={2}>{row.description || "—"}</Text></TableCell>
-          {multiProfileEnabled ? <TableCell><Text>{row.profileName}</Text></TableCell> : null}
           <TableCell><ObjectStatus state={row.status === "ACTIVE" ? "Positive" : "Negative"}>{t(row.status === "ACTIVE" ? "common.active" : "common.inactive")}</ObjectStatus></TableCell>
         </TableRow>)}
       </Table>

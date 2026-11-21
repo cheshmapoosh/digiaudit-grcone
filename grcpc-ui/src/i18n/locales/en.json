@@ -50,7 +50,6 @@
   "basicData.organization-types.formTitle": "Organization Type",
   "basicData.document-types.title": "Document Types",
   "basicData.document-types.formTitle": "Document Type",
-  "basicData.profile": "Profile",
   "basicData.name": "Name",
   "basicData.description": "Description",
   "basicData.empty": "No types have been defined for this profile.",

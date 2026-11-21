@@ -76,6 +76,7 @@ export function CatalogSelectionProvider({ items, enabled, busy, onBusyChange, r
   return <CatalogSelectionContext.Provider value={{
     items: byKey, checked, busy: busy || deleting, enabled,
     reload, reloadOrder: reloadOrder ?? reload, onBusyChange,
+    requestAction: beforeDelete ?? ((action) => action()),
     toggle: (key, selected) => {
       if (busy || deleting || !enabled || !byKey.has(key)) return;
       setCheckedKeys((previous) => {

@@ -33,7 +33,9 @@ public class AccountSessionFilter extends OncePerRequestFilter {
                 reject(response, 401, "SESSION_REVOKED");
                 return;
             }
-            boolean passwordFlow = ("GET".equals(request.getMethod()) && "/api/auth/me".equals(path))
+            // The router reads the public setup status before redirecting to the password form.
+            boolean passwordFlow = ("GET".equals(request.getMethod())
+                    && ("/api/setup/status".equals(path) || "/api/auth/me".equals(path)))
                     || ("POST".equals(request.getMethod()) && "/api/auth/change-password".equals(path));
             if (user.isPasswordChangeRequired() && !passwordFlow) {
                 reject(response, 403, "PASSWORD_CHANGE_REQUIRED");

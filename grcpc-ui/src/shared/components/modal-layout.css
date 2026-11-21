@@ -46,6 +46,21 @@ ui5-dialog:is(.catalogObjectDialog, .objectiveDialog, .globalControlDialog) {
     max-height: 70vh;
     max-height: 70dvh;
 }
+/* Forms can grow within the viewport. Relation tables keep their own height budget. */
+ui5-dialog:is(.catalogObjectDialog, .objectiveDialog, .globalControlDialog)[data-form-columns] {
+    max-height: 88vh;
+    max-height: 88dvh;
+}
+ui5-dialog:is(.catalogObjectDialog, .objectiveDialog, .globalControlDialog)[data-form-columns]::part(content) {
+    padding-block: var(--sapContent_Space_Tiny);
+    padding-inline: var(--sapContent_Space_Small);
+}
+@media (max-width: 720px) {
+    ui5-dialog:is(.catalogObjectDialog, .objectiveDialog, .globalControlDialog)[data-form-columns] {
+        max-height: 94vh;
+        max-height: 94dvh;
+    }
+}
 /* Native Dialog slots keep catalog chrome outside content scrolling. */
 [data-catalog-dialog-content] { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 

@@ -836,12 +836,7 @@ export default function DocumentManager({
         });
     };
 
-    const handleVersionFilesChange = (row: DocumentLinkSummary, event: unknown) => {
-        const files = filesFromChangeEvent(event);
-        if (files.length === 0) {
-            return;
-        }
-
+    const handleVersionFile = (row: DocumentLinkSummary, file: File) => {
         if (stagedVersionDocumentIds.has(row.documentId)) {
             setActionMessage({
                 design: "Negative",
@@ -851,7 +846,7 @@ export default function DocumentManager({
             });
             return;
         }
-        void uploadAndFinalize(files[0], row);
+        void uploadAndFinalize(file, row);
     };
 
     const getDraftTitle = useCallback(
@@ -1065,10 +1060,10 @@ export default function DocumentManager({
                 />
 
                 {!readOnly && showActions ? (
-                    <FileUploader
-                        hideInput
+                    <SingleFileUploader
                         disabled={busy || versioning}
-                        onChange={(event) => handleVersionFilesChange(row, event)}
+                        accessibleName={t("document.actions.addVersion")}
+                        onSelect={(file) => handleVersionFile(row, file)}
                     >
                         <Button
                             design="Transparent"
@@ -1078,7 +1073,7 @@ export default function DocumentManager({
                             })}
                             disabled={busy || versioning}
                         />
-                    </FileUploader>
+                    </SingleFileUploader>
                 ) : null}
 
                 {!readOnly && showActions ? (
@@ -1361,3 +1356,4 @@ export default function DocumentManager({
         </div>
     );
 }
+import { SingleFileUploader } from "@/shared/components/SingleFileUploader";

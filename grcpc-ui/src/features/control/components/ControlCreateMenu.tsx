@@ -1,89 +1,20 @@
-import { useMemo, useState, type CSSProperties } from "react";
-import { createPortal } from "react-dom";
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { CatalogActionButton as Button } from "@/shared/components/CatalogActionButton";
-import { Menu, MenuItem } from "@ui5/webcomponents-react";
-
+import { CatalogCreateMenu } from "@/features/catalog-import/CatalogCreateMenu";
 import type { CentralControlNodeType } from "../domain/centralControl.model";
-
-const ALL_TYPES: CentralControlNodeType[] = ["GROUP", "CONTROL"];
-
-
-const itemIdByType: Record<CentralControlNodeType, string> = {
-  GROUP: "control-create-group",
-  CONTROL: "control-create-control",
-};
-const typeByItemId: Record<string, CentralControlNodeType> = {
-  "control-create-group": "GROUP",
-  "control-create-control": "CONTROL",
-};
-
-type MenuItemClickEvent = { detail?: { item?: HTMLElement & { id?: string } } };
-type ButtonClickEvent = { currentTarget?: EventTarget | null };
 
 interface Props {
   disabled?: boolean;
   slot?: string;
   style?: CSSProperties;
   nodeTypes: CentralControlNodeType[];
-  onCreate: (nodeType: CentralControlNodeType) => void;
+  onCreate: (value: CentralControlNodeType) => void;
 }
 
-export default function ControlCreateMenu({ disabled = false, slot, style, nodeTypes, onCreate }: Props) {
+export default function ControlCreateMenu({ nodeTypes, ...props }: Props) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [opener, setOpener] = useState<HTMLElement | undefined>();
-  const enabledTypes = useMemo(() => new Set(nodeTypes), [nodeTypes]);
-  const blocked = disabled || enabledTypes.size === 0;
-  const labels = useMemo<Record<CentralControlNodeType, string>>(
-    () => ({
-      GROUP: t("control.nodeType.group", { defaultValue: "گروه کنترل" }),
-      CONTROL: t("control.nodeType.control", { defaultValue: "کنترل" }),
-    }),
-    [t],
-  );
-
-  const menu = (
-    <Menu
-      open={open}
-      opener={opener}
-      placement="Bottom"
-      horizontalAlign="End"
-      onClose={() => setOpen(false)}
-      onItemClick={(event) => {
-        const id = (event as MenuItemClickEvent).detail?.item?.id;
-        const type = id ? typeByItemId[id] : null;
-        if (!type || !enabledTypes.has(type)) return;
-        setOpen(false);
-        onCreate(type);
-      }}
-    >
-      {ALL_TYPES.map((type) => (
-        <MenuItem key={type} id={itemIdByType[type]} text={labels[type]} disabled={!enabledTypes.has(type)} />
-      ))}
-    </Menu>
-  );
-
-  return (
-    <>
-      <Button
-        slot={slot}
-        className="createMenuButton"
-        design="Emphasized"
-        disabled={blocked}
-        style={style}
-        endIcon="slim-arrow-down"
-        accessibilityAttributes={{ hasPopup: "menu", expanded: open ? "true" : "false" }}
-        onClick={(event) => {
-          if (blocked) return;
-          const target = (event as ButtonClickEvent).currentTarget;
-          setOpener(target instanceof HTMLElement ? target : undefined);
-          setOpen(true);
-        }}
-      >
-        {t("common.create", { defaultValue: "ایجاد" })}
-      </Button>
-      {typeof document !== "undefined" && document.body ? createPortal(menu, document.body) : null}
-    </>
-  );
+  return <CatalogCreateMenu<CentralControlNodeType> {...props} family="CONTROL" options={[
+      { value: "GROUP", label: t("control.nodeType.group"), disabled: !nodeTypes.includes("GROUP") },
+      { value: "CONTROL", label: t("control.nodeType.control"), disabled: !nodeTypes.includes("CONTROL") },
+    ]} />;
 }

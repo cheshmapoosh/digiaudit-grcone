@@ -28,6 +28,7 @@ type RequestOptions = {
     body?: unknown;
     headers?: Record<string, string>;
     signal?: AbortSignal;
+    onUploadProgress?: (percent: number) => void;
     successMessage?: string | false;
     responseType?: "blob";
 };
@@ -186,6 +187,44 @@ function notifySuccessfulMutation(method: HttpMethod, url: string, options: Requ
     }
 }
 
+function sendMultipartWithProgress(
+    url: string,
+    method: HttpMethod,
+    headers: Record<string, string>,
+    body: FormData,
+    onProgress: (percent: number) => void,
+    signal?: AbortSignal,
+): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        signal?.throwIfAborted();
+        const xhr = new XMLHttpRequest();
+        xhr.open(method, url);
+        xhr.withCredentials = true;
+        xhr.responseType = "blob";
+        for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+
+        const abort = () => xhr.abort();
+        xhr.upload.onprogress = ({ lengthComputable, loaded, total }) => {
+            if (lengthComputable && total > 0) onProgress(Math.floor(100 * loaded / total));
+        };
+        xhr.upload.onload = () => onProgress(100);
+        xhr.onload = () => {
+            const contentType = xhr.getResponseHeader("Content-Type");
+            const empty = xhr.status === 204 || xhr.status === 205 || xhr.status === 304;
+            resolve(new Response(empty ? null : xhr.response, {
+                status: xhr.status,
+                statusText: xhr.statusText,
+                headers: contentType ? { "Content-Type": contentType } : undefined,
+            }));
+        };
+        xhr.onerror = () => reject(new TypeError("Multipart request failed"));
+        xhr.onabort = () => reject(new DOMException("Multipart request aborted", "AbortError"));
+        xhr.onloadend = () => signal?.removeEventListener("abort", abort);
+        signal?.addEventListener("abort", abort, { once: true });
+        xhr.send(body);
+    });
+}
+
 async function request<T>(
     url: string,
     method: HttpMethod,
@@ -196,23 +235,26 @@ async function request<T>(
     const scoped = isDatasetUrl(url) || /\/api\/(usermanagement\/users|auth\/me)/.test(url);
     if (isDatasetUrl(url) && !profileId) throw new HttpError(i18n.t("common.dataAccessRequired"), 403, "PROFILE_REQUIRED");
     const hasBody = options.body !== undefined;
-    const multipart = options.body instanceof FormData;
+    const multipart = options.body instanceof FormData ? options.body : null;
+    const headers = {
+        Accept: "application/json",
+        "Accept-Language": getCurrentLanguage(),
+        ...(hasBody && !multipart ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+        ...(scoped && profileId ? { "X-Profile-Id": profileId } : {}),
+    };
     let response: Response;
 
     try {
-        response = await fetch(finalUrl, {
-            method,
-            headers: {
-                Accept: "application/json",
-                "Accept-Language": getCurrentLanguage(),
-                ...(hasBody && !multipart ? { "Content-Type": "application/json" } : {}),
-                ...options.headers,
-                ...(scoped && profileId ? { "X-Profile-Id": profileId } : {}),
-            },
-            body: multipart ? options.body as FormData : hasBody ? JSON.stringify(options.body) : undefined,
-            signal: options.signal,
-            credentials: "include",
-        });
+        response = multipart && options.onUploadProgress
+            ? await sendMultipartWithProgress(finalUrl, method, headers, multipart, options.onUploadProgress, options.signal)
+            : await fetch(finalUrl, {
+                method,
+                headers,
+                body: multipart ?? (hasBody ? JSON.stringify(options.body) : undefined),
+                signal: options.signal,
+                credentials: "include",
+            });
     } catch (error) {
         if (isAbortError(error)) {
             throw error;

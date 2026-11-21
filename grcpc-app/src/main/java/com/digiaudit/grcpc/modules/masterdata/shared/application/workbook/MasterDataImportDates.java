@@ -4,15 +4,15 @@
  * Licensed under Apache-2.0. See META-INF/LICENSE-UI5-Persian.txt.
  * Modified: strict date validation and conversion using java.time.LocalDate only.
  */
-package com.digiaudit.grcpc.modules.masterdata.catalog.regulation.application;
+package com.digiaudit.grcpc.modules.masterdata.shared.application.workbook;
 
 import java.time.DateTimeException;
 import java.time.LocalDate;
 
-final class RequirementImportDates {
-  private RequirementImportDates() {}
+public final class MasterDataImportDates {
+  private MasterDataImportDates() {}
 
-  static String englishDigits(String text) {
+  public static String englishDigits(String text) {
     var result = new StringBuilder();
     for (char c : text.toCharArray()) {
       if (c >= '۰' && c <= '۹') result.append((char) ('0' + c - '۰'));
@@ -22,7 +22,7 @@ final class RequirementImportDates {
     return result.toString();
   }
 
-  static LocalDate parse(String text) {
+  public static LocalDate parse(String text) {
     if (text.isBlank()) return null;
     String value = englishDigits(text);
     if (value.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}")) return LocalDate.parse(value);

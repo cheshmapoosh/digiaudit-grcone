@@ -253,13 +253,15 @@ export default function CentralPolicyObjectPage({
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
 
   const parent = parentId ? parentCandidates.find((item) => item.id === parentId) : null;
+  const normalizedCode = code.trim().toUpperCase();
+  const normalizedTitle = title.trim();
 
   const validate = () => {
-    if (!code.trim()) {
+    if (!normalizedCode) {
       setValidationError(t("policy.validation.codeRequired", { defaultValue: "شناسه الزامی است." }));
       return false;
     }
-    if (!title.trim()) {
+    if (!normalizedTitle) {
       setValidationError(t("policy.validation.titleRequired", { defaultValue: "نام الزامی است." }));
       return false;
     }
@@ -295,8 +297,8 @@ export default function CentralPolicyObjectPage({
   const submit = async () => {
     if (readOnly || !validate()) return;
     await onSubmit({
-      code: code.trim().toUpperCase(),
-      title: title.trim(),
+      code: normalizedCode,
+      title: normalizedTitle,
       parentId,
       status: mode === "create" ? "ACTIVE" : status,
       policyType,
@@ -333,6 +335,8 @@ export default function CentralPolicyObjectPage({
         ];
   const saveDisabled =
     busy ||
+    !normalizedCode ||
+    !normalizedTitle ||
     invalidDate ||
     documentsBusy ||
     documentsInvalid ||

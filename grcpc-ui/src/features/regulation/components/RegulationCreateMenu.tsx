@@ -1,31 +1,10 @@
-import { useMemo, useState, type CSSProperties } from "react";
-import { createPortal } from "react-dom";
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { CatalogActionButton as Button } from "@/shared/components/CatalogActionButton";
-import { Menu, MenuItem } from "@ui5/webcomponents-react";
+import { CatalogCreateMenu } from "@/features/catalog-import/CatalogCreateMenu";
 
 import type { CentralRegulationNodeType } from "../domain/centralRegulation.model";
 
 const ALL_REGULATION_CREATE_TYPES: CentralRegulationNodeType[] = ["GROUP", "REGULATION", "REQUIREMENT"];
-
-
-const itemIdByType: Record<CentralRegulationNodeType, string> = {
-  GROUP: "regulation-create-group",
-  REGULATION: "regulation-create-regulation",
-  REQUIREMENT: "regulation-create-requirement",
-};
-
-const typeByItemId: Record<string, CentralRegulationNodeType> = {
-  "regulation-create-group": "GROUP",
-  "regulation-create-regulation": "REGULATION",
-  "regulation-create-requirement": "REQUIREMENT",
-};
-
-type MenuItemClickEvent = {
-  detail?: { item?: HTMLElement & { id?: string } };
-};
-
-type ButtonClickEvent = { currentTarget?: EventTarget | null };
 
 interface Props {
   disabled?: boolean;
@@ -33,16 +12,6 @@ interface Props {
   style?: CSSProperties;
   nodeTypes: CentralRegulationNodeType[];
   onCreate: (nodeType: CentralRegulationNodeType) => void;
-}
-
-function readButtonElement(event: unknown): HTMLElement | undefined {
-  const target = (event as ButtonClickEvent).currentTarget;
-  return target instanceof HTMLElement ? target : undefined;
-}
-
-function readNodeType(event: unknown): CentralRegulationNodeType | null {
-  const id = (event as MenuItemClickEvent).detail?.item?.id;
-  return id ? typeByItemId[id] ?? null : null;
 }
 
 export default function RegulationCreateMenu({
@@ -53,67 +22,19 @@ export default function RegulationCreateMenu({
   onCreate,
 }: Props) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [opener, setOpener] = useState<HTMLElement | undefined>();
-  const labels = useMemo<Record<CentralRegulationNodeType, string>>(
-    () => ({
-      GROUP: t("regulation.nodeType.group", { defaultValue: "گروه قانون" }),
-      REGULATION: t("regulation.nodeType.regulation", { defaultValue: "قانون" }),
-      REQUIREMENT: t("regulation.nodeType.requirement", { defaultValue: "الزام" }),
-    }),
-    [t],
-  );
-  const enabledTypes = useMemo(() => new Set(nodeTypes), [nodeTypes]);
-  const blocked = disabled || enabledTypes.size === 0;
-  const menu = (
-    <Menu
-      open={open}
-      opener={opener}
-      placement="Bottom"
-      horizontalAlign="End"
-      onClose={() => setOpen(false)}
-      onItemClick={(event) => {
-        const type = readNodeType(event);
-        if (!type || !enabledTypes.has(type)) return;
-        setOpen(false);
-        onCreate(type);
-      }}
-    >
-      {ALL_REGULATION_CREATE_TYPES.map((type) => (
-        <MenuItem
-          key={type}
-          id={itemIdByType[type]}
-          text={labels[type]}
-          disabled={!enabledTypes.has(type)}
-        />
-      ))}
-    </Menu>
-  );
-
-  return (
-    <>
-      <Button
-        slot={slot}
-        className="createMenuButton"
-        design="Emphasized"
-        disabled={blocked}
-        style={style}
-        endIcon="slim-arrow-down"
-        accessibilityAttributes={{
-          hasPopup: "menu",
-          expanded: open ? "true" : "false",
-        }}
-        onClick={(event) => {
-          if (blocked) return;
-          setOpener(readButtonElement(event));
-          setOpen(true);
-        }}
-      >
-        {t("common.create", { defaultValue: "ایجاد" })}
-      </Button>
-      {typeof document !== "undefined" && document.body
-        ? createPortal(menu, document.body)
-        : null}
-    </>
-  );
+  const labels: Record<CentralRegulationNodeType, string> = {
+    GROUP: t("regulation.nodeType.group"),
+    REGULATION: t("regulation.nodeType.regulation"),
+    REQUIREMENT: t("regulation.nodeType.requirement"),
+  };
+  return <CatalogCreateMenu
+    family="REGULATION"
+    disabled={disabled}
+    slot={slot}
+    style={style}
+    options={ALL_REGULATION_CREATE_TYPES.map((type) => ({
+      value: type, label: labels[type], disabled: !nodeTypes.includes(type),
+    }))}
+    onCreate={onCreate}
+  />;
 }

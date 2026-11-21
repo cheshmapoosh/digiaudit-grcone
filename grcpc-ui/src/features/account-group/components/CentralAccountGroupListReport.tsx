@@ -53,9 +53,9 @@ export default function CentralAccountGroupListReport({
         </>}
         endContent={
           <>
-            <Button design="Emphasized" disabled={busy || !canCreate} onClick={onCreate}>
-              {t("common.create", { defaultValue: "ایجاد" })}
-            </Button>
+            <CatalogCreateMenu family="ACCOUNT_GROUP" disabled={busy || !canCreate}
+              options={[{ value: "ACCOUNT_GROUP", label: t("catalogImport.kinds.ACCOUNT_GROUP") }]}
+              onCreate={onCreate} />
 
             <Button design="Default" disabled={busy || !selectedId} onClick={onShow}>
               {t("common.view", { defaultValue: "نمایش" })}
@@ -90,3 +90,4 @@ export default function CentralAccountGroupListReport({
     </div>
   );
 }
+import { CatalogCreateMenu } from "@/features/catalog-import/CatalogCreateMenu";

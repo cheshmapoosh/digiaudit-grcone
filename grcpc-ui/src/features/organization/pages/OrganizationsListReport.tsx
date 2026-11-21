@@ -69,14 +69,9 @@ export default function OrganizationsListReport({
                 }
                 endContent={
                     <>
-                        <Button
-                            design="Emphasized"
-                            disabled={busy}
-                            hidden={!manage}
-                            onClick={onCreate}
-                        >
-                            {t("common.create", { defaultValue: "ایجاد" })}
-                        </Button>
+                        {manage ? <CatalogCreateMenu family="ORGANIZATION" disabled={busy}
+                            options={[{ value: "ORGANIZATION", label: t("catalogImport.kinds.ORGANIZATION") }]}
+                            onCreate={onCreate} /> : null}
 
 
                         <Button
@@ -125,3 +120,4 @@ export default function OrganizationsListReport({
         </div>
     );
 }
+import { CatalogCreateMenu } from "@/features/catalog-import/CatalogCreateMenu";

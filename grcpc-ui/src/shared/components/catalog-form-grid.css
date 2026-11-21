@@ -18,7 +18,10 @@ div.catalogAdaptiveFormGrid > :is(.modalDateRange, .controlDateRangeRow, .accoun
     gap: .5rem 1rem;
     min-width: 0;
 }
-div.catalogAdaptiveFormGrid :is(ui5-input, ui5-select, ui5-textarea, ui5-date-picker) { width: 100%; min-width: 0; }
+div.catalogAdaptiveFormGrid :is(ui5-input, ui5-select, ui5-textarea, ui5-date-picker, ui5-combobox, ui5-multi-combobox) {
+    width: 100%;
+    min-width: 0;
+}
 @media (min-width: 1101px) {
     div.catalogAdaptiveFormGrid[data-columns="3"] > :is(.modalDateRange, .controlDateRangeRow, .accountGroupDateRange, .globalControlValidityRow) { grid-column: span 2; }
 }

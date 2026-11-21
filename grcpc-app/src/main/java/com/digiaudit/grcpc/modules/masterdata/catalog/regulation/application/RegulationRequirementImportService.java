@@ -1,5 +1,7 @@
 package com.digiaudit.grcpc.modules.masterdata.catalog.regulation.application;
 
+import com.digiaudit.grcpc.modules.masterdata.shared.application.workbook.MasterDataImportDates;
+
 import com.digiaudit.grcpc.common.exception.BusinessException;
 import com.digiaudit.grcpc.common.exception.ConflictException;
 import com.digiaudit.grcpc.common.exception.NotFoundException;
@@ -157,7 +159,7 @@ public class RegulationRequirementImportService {
       int sortOrder = number - 1;
       if (!cells.get(3).isBlank()) {
         try {
-          String sort = RequirementImportDates.englishDigits(cells.get(3));
+          String sort = MasterDataImportDates.englishDigits(cells.get(3));
           if (!sort.matches("[0-9]+")) throw new NumberFormatException();
           sortOrder = support.normalizeSortOrder(Integer.valueOf(sort));
         } catch (NumberFormatException | BusinessException e) {
@@ -192,7 +194,7 @@ public class RegulationRequirementImportService {
 
   private LocalDate date(String value, int row, String field, List<Issue> issues) {
     try {
-      return RequirementImportDates.parse(value);
+      return MasterDataImportDates.parse(value);
     } catch (DateTimeException e) {
       issues.add(new Issue(row, field, "DATE"));
       return null;

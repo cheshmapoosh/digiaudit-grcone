@@ -63,13 +63,9 @@ export default function CentralControlObjectiveListReport({
         </>}
         endContent={
           <>
-            <Button
-              design="Emphasized"
-              disabled={busy || !canCreate}
-              onClick={onCreate}
-            >
-              {t("common.create", { defaultValue: "ایجاد" })}
-            </Button>
+            <CatalogCreateMenu family="CONTROL_OBJECTIVE" disabled={busy || !canCreate}
+              options={[{ value: "CONTROL_OBJECTIVE", label: t("catalogImport.kinds.CONTROL_OBJECTIVE") }]}
+              onCreate={onCreate} />
 
             <Button
               design="Default"
@@ -138,3 +134,4 @@ export default function CentralControlObjectiveListReport({
     </div>
   );
 }
+import { CatalogCreateMenu } from "@/features/catalog-import/CatalogCreateMenu";

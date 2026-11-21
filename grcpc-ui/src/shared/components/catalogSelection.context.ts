@@ -15,6 +15,7 @@ export const CatalogSelectionContext = createContext<{
   reload: () => Promise<unknown>;
   reloadOrder: () => Promise<unknown>;
   onBusyChange: (busy: boolean) => void;
+  requestAction: (action: () => void) => void;
   toggle: (key: string, checked: boolean) => void;
   clear: () => void;
   requestDelete: () => void;
