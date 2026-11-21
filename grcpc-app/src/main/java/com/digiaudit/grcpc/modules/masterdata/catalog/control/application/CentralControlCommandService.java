@@ -1,6 +1,7 @@
 package com.digiaudit.grcpc.modules.masterdata.catalog.control.application;
 
 import com.digiaudit.grcpc.common.exception.ConflictException;
+import com.digiaudit.grcpc.common.exception.ForbiddenException;
 import com.digiaudit.grcpc.common.exception.NotFoundException;
 import com.digiaudit.grcpc.common.exception.UnprocessableEntityException;
 import com.digiaudit.grcpc.modules.document.api.dto.DocumentAggregateBatchRequest;
@@ -248,6 +249,13 @@ public class CentralControlCommandService {
               RevisionRequest.central(
                   "Create central control " + code, "Central Control definition create", null),
               context -> {
+                // The transaction policy re-evaluates controller authorization without request arguments.
+                // Keep this payload-dependent requirement inside the protected business transaction.
+                if (request.initialSubprocess() != null
+                    && (!authorization.canManage("CONTROL") || !authorization.canManage("PROCESS"))) {
+                  throw new ForbiddenException("MASTER_DATA_ACCESS_DENIED", "error.security.forbidden",
+                      "Control creation with an initial Subprocess requires CONTROL and PROCESS manage");
+                }
                 DocumentCommandService.PreparedAggregateContext prepared =
                     documentCommandService.prepareAggregate(request.documents());
                 CentralControlEntity entity = repository.findByCode(code).orElse(null);

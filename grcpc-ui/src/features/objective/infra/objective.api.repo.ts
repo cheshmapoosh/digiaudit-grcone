@@ -8,7 +8,7 @@ const base = "/api/objectives";
 export const objectiveApi = {
   list: () => httpClient.get<Objective[]>(base),
   detail: (id: string) => httpClient.get<Objective>(base + "/" + id),
-  organizations: (id: string, deleted = false) => httpClient.get<ObjectiveOrganizationLink[]>(base + "/" + id + "/organizations" + (deleted ? "?lifecycleStatus=DELETED" : "")),
+  organizations: (id: string, deleted = false, signal?: AbortSignal) => httpClient.get<ObjectiveOrganizationLink[]>(base + "/" + id + "/organizations" + (deleted ? "?lifecycleStatus=DELETED" : ""), { signal }),
   organizationOptions: () => httpClient.get<ObjectiveOrganizationOption[]>("/api/master-data/organizations"),
   create: (body: ObjectiveCreate) => httpClient.post<ObjectiveMutation>(base, body),
   update: (id: string, body: ObjectiveUpdate) => httpClient.put<ObjectiveMutation>(base + "/" + id, body),

@@ -93,7 +93,7 @@ public class ObjectiveService {
     ObjectiveKind kind = request.kind() == null ? ObjectiveKind.OBJECTIVE : request.kind();
     String code = support.normalizeCode(request.code());
     String name = support.normalizeTitle(request.name());
-    if (kind == ObjectiveKind.OBJECTIVE) support.validateValidity(request.validFrom(), request.validTo());
+    support.validateValidity(request.validFrom(), request.validTo());
     AtomicReference<List<DocumentCommandResponse>> finalized = new AtomicReference<>(List.of());
     AtomicReference<OrganizationObjectiveService.Plan> relationPlan = new AtomicReference<>();
     RevisionExecutionResult result = revisions.executeStructural(
@@ -113,8 +113,7 @@ public class ObjectiveService {
           ObjectiveEntity entity = new ObjectiveEntity(id, code, name,
               support.normalizeDescription(request.description()),
               kind == ObjectiveKind.STRATEGY ? null : normalizeType(request.objectiveType()),
-              request.parentObjectiveId(), kind == ObjectiveKind.STRATEGY ? null : request.validFrom(),
-              kind == ObjectiveKind.STRATEGY ? null : request.validTo(),
+              request.parentObjectiveId(), request.validFrom(), request.validTo(),
               actors.currentActorId(), Instant.now(clock), kind);
           var relations = organizationObjectives.prepareForObjective(entity,
               organizationChanges(id, request.organizationIds(), request.organizationChanges(), name));
@@ -149,7 +148,7 @@ public class ObjectiveService {
           if (entity == null || entity.getStatus() == MasterDataLifecycleStatus.DELETED) throw notFound(id);
           support.assertVersion(entity, expected);
           ObjectiveKind kind = request.kind() == null ? entity.getKind() : request.kind();
-          if (kind == ObjectiveKind.OBJECTIVE) support.validateValidity(request.validFrom(), request.validTo());
+          support.validateValidity(request.validFrom(), request.validTo());
           validateStructure(id, kind, request.parentObjectiveId(), hierarchy);
           validateStrategyOrganizations(id, kind, request.organizationIds());
           if (kind == ObjectiveKind.STRATEGY && request.organizationChanges() != null && !request.organizationChanges().isEmpty())
@@ -157,8 +156,8 @@ public class ObjectiveService {
           var projectedOwner = new ObjectiveEntity(id, entity.getCode(), name,
               support.normalizeDescription(request.description()),
               kind == ObjectiveKind.STRATEGY ? null : normalizeType(request.objectiveType()),
-              request.parentObjectiveId(), kind == ObjectiveKind.STRATEGY ? null : request.validFrom(),
-              kind == ObjectiveKind.STRATEGY ? null : request.validTo(), actors.currentActorId(), Instant.now(clock), kind);
+              request.parentObjectiveId(), request.validFrom(), request.validTo(),
+              actors.currentActorId(), Instant.now(clock), kind);
           if (entity.getStatus() == MasterDataLifecycleStatus.INACTIVE)
             projectedOwner.inactivate(actors.currentActorId(), Instant.now(clock));
           var relations = organizationObjectives.prepareForObjective(projectedOwner,
@@ -176,8 +175,7 @@ public class ObjectiveService {
           JsonNode before = support.snapshot(entity, typed(entity));
           entity.update(name, support.normalizeDescription(request.description()),
               kind == ObjectiveKind.STRATEGY ? null : normalizeType(request.objectiveType()), request.parentObjectiveId(),
-              kind == ObjectiveKind.STRATEGY ? null : request.validFrom(),
-              kind == ObjectiveKind.STRATEGY ? null : request.validTo(), actors.currentActorId(), Instant.now(clock), kind);
+              request.validFrom(), request.validTo(), actors.currentActorId(), Instant.now(clock), kind);
           entity = objectives.saveAndFlush(entity);
           finalized.set(documents.finalizePreparedAggregate(prepared, DocumentLinkTargetType.OBJECTIVE,
               id, "MD_REFERENCE_MANAGE"));

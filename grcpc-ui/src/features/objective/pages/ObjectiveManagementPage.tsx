@@ -24,6 +24,7 @@ import { DeleteConfirmDialog } from "@/shared/components/DeleteConfirmDialog";
 import { DetailTabContainer } from "@/shared/components/DetailTabContainer";
 import { ModalDialogHeader } from "@/shared/components/ModalDialogHeader";
 import { OrganizationObjectiveRelations } from "../components/OrganizationObjectiveRelations";
+import { ObjectiveOrganizationsSummary } from "../components/ObjectiveOrganizationsSummary";
 import { MasterDataFormField } from "@/shared/components/MasterDataObjectHeader";
 import { PersianDatePicker, type PersianDateDraftState } from "@/shared/components/PersianDatePicker";
 import { useUnsavedChangesGuard } from "@/shared/hooks/useUnsavedChangesGuard";
@@ -57,8 +58,7 @@ function toForm(value: Objective | null): Form {
 }
 
 function normalizeStrategyForm(value: Form): Form {
-  return value.kind === "STRATEGY" ? { ...value, objectiveType: "", parentObjectiveId: "",
-    validFrom: "", validTo: "" } : value;
+  return value.kind === "STRATEGY" ? { ...value, objectiveType: "", parentObjectiveId: "" } : value;
 }
 
 function buildTree(items: Objective[]): TreeNode[] {
@@ -176,7 +176,7 @@ export default function ObjectiveManagementPage() {
     : expandedIds, [expandedIds, filterCollapsedIds, search, visibleItems]);
   const blockedParents = useMemo(() => selected && mode === "edit"
     ? descendantIds(items, selected.id) : new Set<string>(), [items, mode, selected]);
-  const invalidDateDraft = !isStrategy && (!dateDrafts.validFrom.valid || !dateDrafts.validTo.valid);
+  const invalidDateDraft = !dateDrafts.validFrom.valid || !dateDrafts.validTo.valid;
   const chosenStrategy = rootStrategies.find((item) => item.id === form.parentObjectiveId);
   const structureError = form.kind === "OBJECTIVE" && !chosenStrategy
     ? "objective.errors.strategyRequired"
@@ -245,8 +245,8 @@ export default function ObjectiveManagementPage() {
       name: form.name.trim(), description: form.description.trim() || null,
       objectiveType: isStrategy ? null : form.objectiveType.trim() || null,
       parentObjectiveId: isStrategy ? null : form.parentObjectiveId || null,
-      validFrom: isStrategy ? null : form.validFrom || null,
-      validTo: isStrategy ? null : form.validTo || null,
+      validFrom: form.validFrom || null,
+      validTo: form.validTo || null,
       organizationChanges: isStrategy ? undefined : organizationChanges,
       documents: toDocumentAggregateRequest(documents),
     };
@@ -353,6 +353,12 @@ export default function ObjectiveManagementPage() {
           || t("objective.strategy.missing")}</Text>
         </> : null}
         <Label showColon>{t("objective.description")}</Label><Text>{selected.description || "—"}</Text>
+        <Label showColon>{t("objective.validFrom")}</Label><Text>{formatPersianDate(selected.validFrom)}</Text>
+        <Label showColon>{t("objective.validTo")}</Label><Text>{formatPersianDate(selected.validTo)}</Text>
+        {selected.kind === "OBJECTIVE" ? <>
+          <Label showColon>{t("objective.tabs.organizations")}</Label>
+          <ObjectiveOrganizationsSummary key={`${selected.id}:${selected.version}`} objectiveId={selected.id} />
+        </> : null}
       </div>
       <DialogFooterBar>
         <Button design="Emphasized" disabled={!manage || busy} onClick={() => begin("edit")}>{t("common.edit")}</Button>
@@ -398,6 +404,7 @@ export default function ObjectiveManagementPage() {
           {!isStrategy ? <>
           <MasterDataFormField label={t("objective.type")}>{readOnly ? <Text className="objectPageValue">{(form.objectiveType) || "—"}</Text> : <Input value={form.objectiveType} readonly={readOnly} disabled={busy}
             onInput={(event) => setForm((old) => ({ ...old, objectiveType: event.target.value }))} />}</MasterDataFormField>
+          </> : null}
           <div className="modalDateRange"><MasterDataFormField label={t("objective.validFrom")}>{readOnly ? <Text className="objectPageValue">{(formatPersianDate(form.validFrom)) || "—"}</Text> : <PersianDatePicker value={form.validFrom} readonly={readOnly} disabled={busy} accessibleName={t("objective.validFrom")}
             invalidValueMessage={t("objective.errors.dates")}
             onChange={(value) => setForm((old) => ({ ...old, validFrom: value }))}
@@ -410,7 +417,6 @@ export default function ObjectiveManagementPage() {
             onDraftStateChange={(state) => setDateDrafts((old) =>
               old.validTo.valid === state.valid && old.validTo.draftValue === state.draftValue
                 && old.validTo.dirty === state.dirty ? old : { ...old, validTo: state })} />}</MasterDataFormField></div>
-          </> : null}
           <MasterDataFormField label={t("objective.description")} wide>{readOnly ? <Text className="objectPageValue">{(form.description) || "—"}</Text> : <TextArea value={form.description} readonly={readOnly} disabled={busy} rows={3}
             onInput={(event) => setForm((old) => ({ ...old, description: event.target.value }))} />}</MasterDataFormField>
         </CatalogFormGrid>

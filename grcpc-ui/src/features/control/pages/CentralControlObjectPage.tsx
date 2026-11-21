@@ -148,8 +148,9 @@ function normalized(form: FormState) {
   };
 }
 
-function readValue(event: unknown): string {
-  return (event as { target?: { value?: string } }).target?.value ?? "";
+function readValue(event: { detail: { selectedOption: { value?: string } } }): string {
+  // Select.value falls back to the label when the selected option has an empty value.
+  return event.detail.selectedOption.value ?? "";
 }
 
 function Field({ label, required, fullWidth, children }: { label: string; required?: boolean; fullWidth?: boolean; children: ReactNode }) {
@@ -359,7 +360,7 @@ export default function CentralControlObjectPage({
                 {TRIGGERS.map((item) => <Option key={item} value={item}>{t(`control.triggerType.${item}`)}</Option>)}
               </Select>}
             </Field>
-            <Field label={t("control.fields.operationFrequency")}>{readOnly ? <Text className="objectPageValue">{(form.operationFrequency ? t("control.operationFrequency." + form.operationFrequency) : "—") || "—"}</Text> : <Select value={form.operationFrequency} disabled={readOnly || busy || form.triggerType !== "DATE"} onChange={(e) => change("operationFrequency", e.target.value as FormState["operationFrequency"])}><Option value="">{t("common.notSpecified", { defaultValue: "تعیین نشده" })}</Option>{FREQUENCIES.map((item) => <Option key={item} value={item}>{t(`control.operationFrequency.${item}`)}</Option>)}</Select>}</Field>
+            <Field label={t("control.fields.operationFrequency")}>{readOnly ? <Text className="objectPageValue">{(form.operationFrequency ? t("control.operationFrequency." + form.operationFrequency) : "—") || "—"}</Text> : <Select value={form.operationFrequency} disabled={readOnly || busy || form.triggerType !== "DATE"} onChange={(e) => change("operationFrequency", readValue(e) as FormState["operationFrequency"])}><Option value="">{t("common.notSpecified", { defaultValue: "تعیین نشده" })}</Option>{FREQUENCIES.map((item) => <Option key={item} value={item}>{t(`control.operationFrequency.${item}`)}</Option>)}</Select>}</Field>
             <Field label={t("control.fields.eventDescription")} fullWidth>
               {readOnly ? <Text className="objectPageValue">{(form.eventDescription) || "—"}</Text> : <TextArea
                 rows={3}
@@ -370,7 +371,7 @@ export default function CentralControlObjectPage({
                 onInput={(event) => change("eventDescription", event.target.value)}
               />}
             </Field>
-            <Field label={t("control.fields.toBeTested")}>{readOnly ? <Text className="objectPageValue">{(form.toBeTested ? t(form.toBeTested === "true" ? "common.yes" : "common.no") : "—") || "—"}</Text> : <Select value={form.toBeTested} disabled={readOnly || busy} onChange={(e) => change("toBeTested", e.target.value as FormState["toBeTested"])}><Option value="">{t("common.notSpecified", { defaultValue: "تعیین نشده" })}</Option><Option value="true">{t("common.yes", { defaultValue: "بله" })}</Option><Option value="false">{t("common.no", { defaultValue: "خیر" })}</Option></Select>}</Field>
+            <Field label={t("control.fields.toBeTested")}>{readOnly ? <Text className="objectPageValue">{(form.toBeTested ? t(form.toBeTested === "true" ? "common.yes" : "common.no") : "—") || "—"}</Text> : <Select value={form.toBeTested} disabled={readOnly || busy} onChange={(e) => change("toBeTested", readValue(e) as FormState["toBeTested"])}><Option value="">{t("common.notSpecified", { defaultValue: "تعیین نشده" })}</Option><Option value="true">{t("common.yes", { defaultValue: "بله" })}</Option><Option value="false">{t("common.no", { defaultValue: "خیر" })}</Option></Select>}</Field>
             {selectField(t("control.fields.testAutomationType"), form.testAutomationType, TEST_AUTOMATION, "testAutomationType", "control.testAutomationType")}
             {selectField(t("control.fields.testingTechnique"), form.testingTechnique, TESTING_TECHNIQUES, "testingTechnique", "control.testingTechnique")}
             {selectField(t("control.fields.evidenceLevel"), form.evidenceLevel, EVIDENCE_LEVELS, "evidenceLevel", "control.evidenceLevel")}

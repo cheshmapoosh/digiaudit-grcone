@@ -8,7 +8,7 @@ Strategies and objectives share the `objective` hierarchy. A strategy is a root 
 
 ## Rules
 - Follow `grcpc-docs/master-data/accepted-corrections/2026-10-27-objective-strategy-classification.md` for delivery item 3.
-- The owner's follow-up `grcpc-docs/master-data/accepted-corrections/2026-10-28-objective-strategy-corrections.md` supersedes nested strategies and the shared Strategy form. Strategy Create/Update retains only code/name/description and Documents; objective type and validity are normalized to null. Strategy parents and Strategy children are rejected before mutation.
+- The owner's follow-up `grcpc-docs/master-data/accepted-corrections/2026-10-28-objective-strategy-corrections.md` supersedes nested strategies and the shared Strategy form. The later `2026-11-21-objective-validity-and-summary.md` enables optional validity dates on Strategy Create/Update: validate and persist them exactly as for Objectives. Only objective type is normalized to null for Strategies. Strategy parents and Strategy children are rejected before mutation.
 - Preserve tree behavior using `parentObjectiveId`; prevent cycles and invalid parent references. `kind` distinguishes `STRATEGY` from `OBJECTIVE` and is independent of `objectiveType`.
 - Create, aggregate Update (including kind changes), Delete and Restore use the existing `OBJECTIVE` Guard. Create/Update and Organization Objective assignment retain the `ORGANIZATION` Guard union.
 - Keep `nodeType` compatible with the UI type `objective`.
