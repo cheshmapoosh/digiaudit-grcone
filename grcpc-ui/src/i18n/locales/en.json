@@ -352,6 +352,8 @@
   "usermanagement.demo.firstName": "First name",
   "usermanagement.demo.lastName": "Last name",
   "usermanagement.demo.username": "Username",
+  "usermanagement.demo.nationalCode": "National ID",
+  "usermanagement.demo.invalidNationalCode": "National ID must contain 10 digits.",
   "usermanagement.demo.password": "Password",
   "usermanagement.demo.confirmPassword": "Confirm password",
   "usermanagement.demo.passwordConfirmationMismatch": "Passwords do not match.",

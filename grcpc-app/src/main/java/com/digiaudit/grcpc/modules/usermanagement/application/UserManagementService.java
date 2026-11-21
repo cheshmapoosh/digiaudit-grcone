@@ -64,6 +64,7 @@ public class UserManagementService {
                         .passwordChangeRequired(true)
                         .firstName(request.firstName().trim())
                         .lastName(request.lastName().trim())
+                        .nationalCode(request.nationalCode())
                         .mobile(blankToNull(request.mobile()))
                         .email(blankToNull(request.email()))
                         .enabled(request.enabled() == null || request.enabled())

@@ -50,6 +50,9 @@ public class AppUserEntity extends AuditableEntity {
     @Column(name = "last_name", nullable = false, length = 100)
     private String lastName;
 
+    @Column(name = "national_code", length = 10)
+    private String nationalCode;
+
     @Column(name = "mobile", length = 20)
     private String mobile;
 

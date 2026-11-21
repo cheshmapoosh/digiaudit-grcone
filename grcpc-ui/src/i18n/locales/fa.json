@@ -352,6 +352,8 @@
   "usermanagement.demo.firstName": "نام",
   "usermanagement.demo.lastName": "نام خانوادگی",
   "usermanagement.demo.username": "نام کاربری",
+  "usermanagement.demo.nationalCode": "کد ملی",
+  "usermanagement.demo.invalidNationalCode": "کد ملی باید ۱۰ رقم باشد.",
   "usermanagement.demo.password": "گذرواژه",
   "usermanagement.demo.confirmPassword": "تکرار گذرواژه",
   "usermanagement.demo.passwordConfirmationMismatch": "گذرواژه و تکرار آن یکسان نیستند.",

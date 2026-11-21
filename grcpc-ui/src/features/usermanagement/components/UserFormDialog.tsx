@@ -14,6 +14,7 @@ import { DialogFooterBar } from "@/shared/components/DialogFooter";
 import { isValidUsername } from "@/features/auth/domain/usernamePolicy";
 import { isValidPassword } from "@/features/auth/domain/passwordPolicy";
 import { PersianDatePicker, type PersianDateDraftState } from "@/shared/components/PersianDatePicker";
+import { toEnglishDigits } from "@/shared/utils/date.utils";
 
 export default function UserFormDialog({ user, onClose, onCreated }: { user?: UserDetail; onClose: () => void; onCreated: (id: string) => void }) {
   const { t, i18n } = useTranslation();
@@ -23,7 +24,7 @@ export default function UserFormDialog({ user, onClose, onCreated }: { user?: Us
   const currentProfileId = selectedProfileId();
   const [form, setForm] = useState(() => ({
     username: user?.username ?? "", firstName: user?.firstName ?? "", lastName: user?.lastName ?? "", password: "", confirmPassword: "",
-    email: user?.email ?? "", mobile: user?.mobile ?? "",
+    nationalCode: "", email: user?.email ?? "", mobile: user?.mobile ?? "",
     profileId: user?.profileId ?? (user?.profileAdmin || user?.rootUser ? "" : selectedProfileId() ?? ""),
     profileAdmin: user?.profileAdmin ?? false, profileAccessIds: user?.profileAccessIds ?? [],
     roleIds: [...new Set(user?.assignments.filter((a) => a.active && a.scopeType === "GLOBAL" && !a.scopeOrgUnitId).map((a) => a.roleId) ?? [])],
@@ -42,11 +43,13 @@ export default function UserFormDialog({ user, onClose, onCreated }: { user?: Us
   const dirty = JSON.stringify(form) !== baseline || selectedDateDrafts.some((draft) => draft.dirty || !draft.valid);
   const { blocker, runWithNavigationBypass } = useUnsavedChangesGuard(dirty);
   const validUsername = isValidUsername(form.username);
+  const nationalCode = toEnglishDigits(form.nationalCode.trim());
+  const validNationalCode = /^[0-9]{10}$/.test(nationalCode);
   const datesOrdered = form.roleIds.every((id) => {
     const period = form.rolePeriods[id];
     return !period?.validFrom || !period.validTo || period.validFrom <= period.validTo;
   });
-  const valid = (user || validUsername) && form.firstName.trim() && form.lastName.trim()
+  const valid = (user || (validUsername && validNationalCode)) && form.firstName.trim() && form.lastName.trim()
     && (user || (isValidPassword(form.password) && form.password === form.confirmPassword)) && (user?.rootUser || form.profileAdmin || form.profileId)
     && (form.profileAdmin || (!datesInvalid && datesOrdered));
   const roleChoices = [...choices, ...(user?.assignments ?? []).filter((a) => a.active && a.scopeType === "GLOBAL"
@@ -78,7 +81,7 @@ export default function UserFormDialog({ user, onClose, onCreated }: { user?: Us
         defaultOrgUnitId: membership.profileId !== user.profileId || membership.profileAdmin !== user.profileAdmin ? null : user.defaultOrgUnitId, ...membership,
       });
       else id = await userManagementService.createUser({ username: form.username, password: form.password,
-        firstName: form.firstName, lastName: form.lastName, email: form.email || null, mobile: form.mobile || null,
+        firstName: form.firstName, lastName: form.lastName, nationalCode, email: form.email || null, mobile: form.mobile || null,
         ...membership, enabled: true, defaultOrgUnitId: null });
       runWithNavigationBypass(() => onCreated(id!));
     } catch (e) { setError(e instanceof Error ? e.message : t("usermanagement.demo.saveError")); }
@@ -94,11 +97,19 @@ export default function UserFormDialog({ user, onClose, onCreated }: { user?: Us
       <FlexBox direction="Column" className="userManagementForm userManagementWideForm">
         {error ? <MessageStrip design="Negative" hideCloseButton>{error}</MessageStrip> : null}
         <Form accessibleMode="Edit" accessibleName={t(user ? "profile.editUser" : "usermanagement.demo.createUser")} layout="S1 M2 L2 XL2" labelSpan="S12 M12 L12 XL12" itemSpacing="Normal">
-          <FormGroup columnSpan={2} accessibleName={t("usermanagement.demo.username")}>
+          <FormGroup columnSpan={2} accessibleName={user
+            ? t("usermanagement.demo.username")
+            : `${t("usermanagement.demo.username")} / ${t("usermanagement.demo.nationalCode")}`}>
             <FormItem labelContent={<Label for="user-form-username" required>{t("usermanagement.demo.username")}</Label>}>
               <Input id="user-form-username" value={form.username} maxlength={100} readonly={Boolean(user)} disabled={busy}
                 onInput={(event) => setForm((current) => ({ ...current, username: event.target.value }))} />
             </FormItem>
+            {!user ? <FormItem labelContent={<Label for="user-form-national-code" required>{t("usermanagement.demo.nationalCode")}</Label>}>
+              <Input id="user-form-national-code" value={form.nationalCode} maxlength={10} dir="ltr" required disabled={busy}
+                valueState={nationalCode && !validNationalCode ? "Negative" : "None"}
+                valueStateMessage={<Text>{t("usermanagement.demo.invalidNationalCode")}</Text>}
+                onInput={(event) => setForm((current) => ({ ...current, nationalCode: event.target.value }))} />
+            </FormItem> : null}
           </FormGroup>
           <FormGroup columnSpan={2} accessibleName={`${t("usermanagement.demo.firstName")} / ${t("usermanagement.demo.lastName")}`}>
             {(["firstName", "lastName"] as const).map((field) => <FormItem key={field} labelContent={<Label for={`user-form-${field}`} required>{t(`usermanagement.demo.${field}`)}</Label>}>
@@ -114,12 +125,12 @@ export default function UserFormDialog({ user, onClose, onCreated }: { user?: Us
                 onInput={(event) => setForm((current) => ({ ...current, [field]: event.target.value }))} />
             </FormItem>)}
           </FormGroup> : null}
-          {user ? <FormGroup columnSpan={2} accessibleName={`${t("usermanagement.demo.email")} / ${t("usermanagement.demo.mobile")}`}>
+          <FormGroup columnSpan={2} accessibleName={`${t("usermanagement.demo.email")} / ${t("usermanagement.demo.mobile")}`}>
             {(["email", "mobile"] as const).map((field) => <FormItem key={field} labelContent={<Label for={`user-form-${field}`}>{t(`usermanagement.demo.${field}`)}</Label>}>
               <Input id={`user-form-${field}`} value={form[field]} maxlength={field === "email" ? 200 : 20} disabled={busy}
                 onInput={(event) => setForm((current) => ({ ...current, [field]: event.target.value }))} />
             </FormItem>)}
-          </FormGroup> : null}
+          </FormGroup>
         </Form>
         {root && !user?.rootUser ? <CheckBox text={t("profile.adminRole")} checked={form.profileAdmin} disabled={busy} onChange={(event) => {
           const profileAdmin = event.target.checked;

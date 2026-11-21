@@ -73,7 +73,7 @@ export interface RoleDetail {
     businessPermissions: PermissionItem[];
 }
 export interface CreateUserInput {
-    username: string; password: string; firstName: string; lastName: string;
+    username: string; password: string; firstName: string; lastName: string; nationalCode: string;
     email?: string | null; mobile?: string | null; enabled: boolean; defaultOrgUnitId: null;
     profileId: string | null; profileAdmin: boolean; profileAccessIds: string[]; roleIds?: string[]; roleGrants?: ProfileRoleGrant[];
 }
