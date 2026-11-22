@@ -9,6 +9,15 @@ It starts:
 - Oracle Free test database
 - MinIO object storage
 
+## Windows Test ZIP
+
+Extract the ZIP and run `grcone-app.test.bat`. A fresh Test uses `GRCONE`.
+On an existing Test, the runner reuses its data and can recover missing
+local settings from the existing Docker containers. Run `--reset` explicitly
+to delete and rebuild Test. Test runs in attached mode by default and shows
+service logs in the same window. Use `Ctrl+C` to stop it and preserve its data.
+Use `--detach` to start Test in the background.
+
 ## Fresh Windows package
 
 Extract the fresh Test ZIP and double-click `grcone-app.test.fresh.bat`.
@@ -90,17 +99,42 @@ sets the address used by the browser for signed downloads.
 .\grcone-app.test.bat --logs
 ```
 
-To replace an existing Windows Test, run from its deployment directory:
+## Check the configuration or Oracle
+
+Run from the Test deployment directory:
+
+```powershell
+.\grcone-app.test.bat --check-config
+.\grcone-app.test.bat --check
+```
+
+```bash
+bash ./grcone-app.test.sh --check-config
+bash ./grcone-app.test.sh --check
+```
+
+`--check-config` validates the resolved Compose settings without starting Docker
+or connecting to Oracle. `--check` requires the installed `grcone-app.jar` and
+a running Oracle. It checks the configured connection and schema, runs
+insert, read, update, and delete against a temporary table, then drops the
+table. It uses a one-shot container without starting the app or MinIO.
+
+## Reset a Windows Test
+
+To replace an existing Windows Test, run from the directory where you want
+the replacement Test to run:
 
 ```powershell
 .\grcone-app.test.bat --reset --detach
 ```
 
-The runner displays the selected project and asks for confirmation. It removes
-the Oracle volume and the data under the deployment directory, then starts on
-the local Oracle container with the `GRCONE` user and schema. It remembers the
-project in `.grcone-test-reset-project` so later starts use the same database
-settings. Existing `.env` and `test.env` files require no edits.
+The runner checks the existing Docker project's Compose labels and displays the
+previous installation, the replacement directory, and the Test data directories
+it will delete. After confirmation it removes the Test Oracle volume and the
+listed data, then starts on the local Oracle container with the `GRCONE` user and
+schema. The runner picks free host ports when the configured ones are busy and
+remembers the project and ports in `.grcone-test-reset-project`. Existing `.env`
+and `test.env` files require no edits.
 
 ## Endpoints and data
 

@@ -9,6 +9,7 @@ ENV_FILE="$SCRIPT_DIR/stage.env"
 APP_JAR="$SCRIPT_DIR/grcone-app.jar"
 MODE=""
 DETACH="false"
+USE_NGINX="true"
 JAR_SOURCE=""
 
 usage() {
@@ -24,6 +25,7 @@ Usage:
   ./grcone-app.stage.sh --reset --detach    Reset and start in the background
   ./grcone-app.stage.sh                     Start attached using grcone-app.jar
   ./grcone-app.stage.sh --detach            Start in the background
+  ./grcone-app.stage.sh --no-nginx --detach Start with direct HTTP and MinIO ports
   ./grcone-app.stage.sh /path/to/app.jar --detach
                                           Copy the selected JAR and start
   ./grcone-app.stage.sh --status            Show service status
@@ -33,6 +35,8 @@ Usage:
 
 Attached mode is the default; Ctrl+C stops the services.
 --detached and -d are aliases for --detach.
+Set STAGE_NGINX_ENABLED=false in stage.env to skip the bundled reverse proxy.
+--no-nginx overrides stage.env for this invocation.
 Relative JAR paths are resolved from your current working directory.
 Compose, stage.env and the runtime grcone-app.jar live beside this script.
 MinIO files and application logs persist in data/minio and data/app/logs.
@@ -68,6 +72,7 @@ parse_args() {
             --logs|logs) set_mode logs ;;
             --down|down) set_mode down ;;
             --detach|--detached|detach|-d) DETACH="true" ;;
+            --no-nginx) USE_NGINX="false" ;;
             -*) fail "Unknown option: $1 (use --help)." ;;
             *)
                 [[ -z "$JAR_SOURCE" ]] || fail "Only one JAR can be selected."
@@ -92,7 +97,52 @@ parse_args() {
 }
 
 compose() {
-    sudo env APP_JAR_PATH="$APP_JAR" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
+    local -a args=(sudo env APP_JAR_PATH="$APP_JAR" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+    if [[ "$USE_NGINX" == "true" ]]; then
+        "${args[@]}" -p "$PROJECT_NAME" "$@"
+        return
+    fi
+
+    # Only direct Stage publishes the app and MinIO API ports itself.
+    "${args[@]}" -f - -p "$PROJECT_NAME" "$@" <<'DIRECT_STAGE'
+services:
+  app:
+    ports:
+      - target: 8080
+        published: "${APP_PORT:-8080}"
+        host_ip: "${STAGE_DIRECT_BIND_ADDRESS:-0.0.0.0}"
+    environment:
+      GRCONE_MINIO_PUBLIC_ENDPOINT: ${GRCONE_MINIO_PUBLIC_ENDPOINT:-${DIGIGRCONE_MINIO_PUBLIC_ENDPOINT:-${GRCPC_MINIO_PUBLIC_ENDPOINT:-http://${PUBLIC_HOST:-localhost}:${STAGE_MINIO_API_PORT:-9000}}}}
+  minio:
+    ports:
+      - target: 9000
+        published: "${STAGE_MINIO_API_PORT:-9000}"
+        host_ip: "${STAGE_DIRECT_BIND_ADDRESS:-0.0.0.0}"
+  nginx:
+    profiles: [nginx]
+DIRECT_STAGE
+}
+
+configure_nginx() {
+    [[ "$USE_NGINX" == "true" ]] || return 0
+
+    local enabled
+    enabled="$(compose config --environment | sed -n 's/^STAGE_NGINX_ENABLED=//p')" \
+        || fail "Could not read Stage settings from stage.env."
+    case "${enabled,,}" in
+        ""|true) ;;
+        false) USE_NGINX="false" ;;
+        *) fail "STAGE_NGINX_ENABLED must be true or false in stage.env." ;;
+    esac
+}
+
+start_services() {
+    if [[ "$USE_NGINX" == "true" ]]; then
+        compose up "$@" app nginx
+    else
+        compose --profile nginx rm --stop --force nginx
+        compose up "$@" app
+    fi
 }
 
 select_existing_project() {
@@ -135,6 +185,7 @@ check_compose() {
     docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is not available."
     [[ -f "$COMPOSE_FILE" ]] || fail "Compose file not found: $COMPOSE_FILE"
     [[ -f "$ENV_FILE" && -r "$ENV_FILE" ]] || fail "stage.env is not a readable file."
+    configure_nginx
     compose config --quiet
 }
 
@@ -152,15 +203,13 @@ run_db_command() {
     case "$1" in
         reset)
             compose run --rm --no-deps -e GRCONE_STAGE_DB_INIT_CONFIRMED=RESET \
-                --entrypoint java app -jar /opt/grcone/grcone-app.jar --stage-db-init
+                app --stage-db-init
             ;;
         check)
-            compose run --rm --no-deps --entrypoint java app \
-                -jar /opt/grcone/grcone-app.jar --stage-db-check
+            compose run --rm --no-deps app --stage-db-check
             ;;
         schema_copy_check)
-            compose run --rm --no-deps --entrypoint java app \
-                -jar /opt/grcone/grcone-app.jar --schema-copy-check
+            compose run --rm --no-deps app --schema-copy-check
             ;;
     esac
 }
@@ -231,16 +280,16 @@ main() {
         reset)
             require_runtime_jar
             confirm_reset
-            compose down
+            compose --profile nginx down
             run_db_command reset
             mkdir -p -- "$SCRIPT_DIR/data/minio" "$SCRIPT_DIR/data/app/logs"
             if [[ "$DETACH" == "true" ]]; then
-                compose up -d
+                start_services -d
                 compose ps --all
                 echo "Schema rebuilt and startup requested. Use --logs to check application readiness."
             else
                 echo "Schema rebuilt. Starting attached; press Ctrl+C to stop the services."
-                compose up
+                start_services
             fi
             ;;
         status)
@@ -251,7 +300,7 @@ main() {
         logs) compose logs --tail 200 -f ;;
         down)
             echo "Stopping stage containers; persistent data will be preserved."
-            compose down
+            compose --profile nginx down
             ;;
         up)
             prepare_jar
@@ -259,12 +308,12 @@ main() {
             echo "MinIO data: $SCRIPT_DIR/data/minio"
             echo "Application logs: $SCRIPT_DIR/data/app/logs"
             if [[ "$DETACH" == "true" ]]; then
-                compose up -d --force-recreate app nginx
+                start_services -d --force-recreate
                 compose ps --all
                 echo "Startup requested. Use --logs to check Oracle connectivity and application readiness."
             else
                 echo "Starting attached. Press Ctrl+C to stop the services."
-                compose up --force-recreate app nginx
+                start_services --force-recreate
             fi
             ;;
     esac

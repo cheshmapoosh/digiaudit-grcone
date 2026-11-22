@@ -41,6 +41,7 @@ public final class StageDatabaseCommand {
             throw new IllegalArgumentException("Stage database commands require an Oracle JDBC URL");
         }
 
+        System.out.println("Oracle target: " + OracleConnectionLog.describe(url) + " (Stage database command)");
         if (checking) {
             checkLog("Connecting to Oracle with the configured stage credentials (credentials are not logged)");
         }

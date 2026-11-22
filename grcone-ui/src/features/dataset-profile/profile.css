@@ -27,4 +27,4 @@
 .profileManagementForm { padding: 1rem; width: 100%; min-width: 0; box-sizing: border-box; gap: 1rem; }
 .profileManagementForm ui5-input, .profileManagementForm ui5-textarea { width: 100%; }
 .profileManagementAvatar { gap: .5rem; }
-.profileIconChoices { width: min(22rem, calc(100vw - 4rem)); max-height: 22rem; overflow: auto; }
+.profileIconChoices { width: min(22rem, calc(100vw - 4rem)); }

@@ -14,6 +14,7 @@
 /test.env
 /.grcone-test-reset-project
 /.grcone-test-reset-project.pending
+/.grcone-test-reset-project.next
 /grcone-ui/.env
 /.grcone-fresh-test/
 /tls/

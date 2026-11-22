@@ -1,6 +1,7 @@
 package com.digiaudit.grcone;
 
 import com.digiaudit.grcone.runtime.LegacyRuntimeQuarantineTypeFilter;
+import com.digiaudit.grcone.runtime.OracleConnectionLog;
 import com.digiaudit.grcone.runtime.StageDatabaseCommand;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.SpringBootConfiguration;
@@ -32,7 +33,9 @@ public class GrconeApiApplication {
             StageDatabaseCommand.run(args[0]);
             return;
         }
-        SpringApplication.run(GrconeApiApplication.class, args);
+        SpringApplication application = new SpringApplication(GrconeApiApplication.class);
+        application.addInitializers(context -> OracleConnectionLog.logStartupTarget(context.getEnvironment()));
+        application.run(args);
     }
 
 }

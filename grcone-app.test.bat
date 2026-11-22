@@ -49,6 +49,16 @@ if /I "%~1"=="/?" (
     shift
     goto :parse_loop
 )
+if /I "%~1"=="--check-config" (
+    set "MODE=check_config"
+    shift
+    goto :parse_loop
+)
+if /I "%~1"=="--check" (
+    set "MODE=check"
+    shift
+    goto :parse_loop
+)
 if /I "%~1"=="--check-schema-copy" (
     set "MODE=schema_copy_check"
     shift
@@ -142,6 +152,14 @@ if /I not "%MODE%"=="up" if /I "%RESET_DATA%"=="true" (
     echo ERROR: --reset is only valid when starting the environment.
     exit /b 1
 )
+if /I "%MODE%"=="check_config" if defined JAR_SOURCE (
+    echo ERROR: --check-config does not accept a JAR path.
+    exit /b 1
+)
+if /I "%MODE%"=="check" if defined JAR_SOURCE (
+    echo ERROR: --check uses the installed grcone-app.jar.
+    exit /b 1
+)
 
 if not exist "%COMPOSE_FILE%" (
     echo ERROR: Compose file not found: %CD%\%COMPOSE_FILE%
@@ -153,8 +171,16 @@ if errorlevel 1 exit /b %ERRORLEVEL%
 call :select_test_installation
 if errorlevel 1 exit /b %ERRORLEVEL%
 
+if /I "%MODE%"=="check_config" (
+    call :compose_check_config
+    exit /b !ERRORLEVEL!
+)
+if /I "%MODE%"=="check" (
+    call :run_db_check --stage-db-check
+    exit /b !ERRORLEVEL!
+)
 if /I "%MODE%"=="schema_copy_check" (
-    docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" run --rm --no-deps --entrypoint java app -jar /opt/grcone/grcone-app.jar --schema-copy-check
+    call :run_db_check --schema-copy-check
     exit /b !ERRORLEVEL!
 )
 
@@ -181,14 +207,13 @@ call :validate_jar
 if errorlevel 1 exit /b %ERRORLEVEL%
 
 if /I "%RESET_DATA%"=="true" (
-    call :check_reset_project
+    call :manage_test_installation reset
     if errorlevel 1 exit /b !ERRORLEVEL!
-    call :reset_test_files check
+    call :use_grcone_database
+) else if not exist "%RESET_PROJECT_FILE%" (
+    call :manage_test_installation recover
     if errorlevel 1 exit /b !ERRORLEVEL!
-    call :confirm_reset
-    if errorlevel 1 exit /b !ERRORLEVEL!
-    call :reset_data
-    if errorlevel 1 exit /b !ERRORLEVEL!
+    if exist "%RESET_PROJECT_FILE%" call :use_grcone_database
 )
 
 call :prepare_dirs
@@ -217,83 +242,18 @@ if /I "%DETACH%"=="true" (
 call :start_attached
 exit /b %ERRORLEVEL%
 
-:confirm_reset
-echo Docker project: %PROJECT_NAME%
-echo Test directory: %CD%
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "Write-Host ''; Write-Host 'WARNING: RESET WILL PERMANENTLY DELETE ALL TEST DATA.' -ForegroundColor Yellow; Write-Host '  - Oracle database named volume' -ForegroundColor Yellow; Write-Host '  - MinIO object data' -ForegroundColor Yellow; Write-Host '  - Application logs' -ForegroundColor Yellow; Write-Host '  - Legacy data/oracle directory, if present' -ForegroundColor Yellow; Write-Host 'This operation cannot be undone.' -ForegroundColor Yellow; Write-Host ''"
-if errorlevel 1 (
-    echo.
-    echo WARNING: RESET WILL PERMANENTLY DELETE ALL TEST DATA.
-    echo This operation cannot be undone.
-    echo.
-)
-set "RESET_CONFIRM="
-set /P "RESET_CONFIRM=Delete this Test and start again with schema GRCONE? [y/N]: "
-if /I "!RESET_CONFIRM!"=="Y" exit /b 0
-if /I "!RESET_CONFIRM!"=="YES" exit /b 0
-echo.
-echo Reset cancelled. No persistent data was changed.
-exit /b 2
-
-:check_reset_project
+:manage_test_installation
+set "RESET_RUNNER_FILE=%~f0"
+set "TEST_INSTALLATION_ACTION=%~1"
 powershell -NoProfile -Command ^
-  "$ErrorActionPreference = 'Stop'; $filter = 'label=com.docker.compose.project=' + $env:PROJECT_NAME;" ^
-  "$ids = @(docker ps --all --quiet --filter $filter);" ^
-  "if ($LASTEXITCODE -ne 0) { throw 'Could not identify existing Test containers.' }" ^
-  "if ($ids.Count) {" ^
-  "    $containers = docker container inspect @ids | Out-String | ConvertFrom-Json;" ^
-  "    if ($LASTEXITCODE -ne 0 -or -not $containers) { throw 'Could not inspect existing Test containers.' }" ^
-  "    $compose = Join-Path (Get-Item -LiteralPath '.').FullName $env:COMPOSE_FILE;" ^
-  "    foreach ($container in $containers) {" ^
-  "        $files = $container.Config.Labels.'com.docker.compose.project.config_files' -split ',';" ^
-  "        if ($compose -notin $files) { throw ('Docker project ' + $env:PROJECT_NAME + ' belongs to a different deployment.') }" ^
-  "    }" ^
-  "}"
+  "$parts = (Get-Content -LiteralPath $env:RESET_RUNNER_FILE -Raw) -split '(?m)^# Test reset PowerShell\r?$', 2; & ([scriptblock]::Create($parts[1]))"
 exit /b %ERRORLEVEL%
-
-:reset_test_files
-set "RESET_FILE_ACTION=%~1"
-docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" config --format json | powershell -NoProfile -Command ^
-  "$ErrorActionPreference = 'Stop'; $config = $input | Out-String | ConvertFrom-Json;" ^
-  "$minio = $config.services.minio.volumes | Where-Object { $_.type -eq 'bind' -and $_.target -eq '/data' };" ^
-  "$logs = $config.services.app.volumes | Where-Object { $_.type -eq 'bind' -and $_.target -eq '/opt/grcone/logs' };" ^
-  "if (-not ($minio.source -and $logs.source)) { throw 'Could not identify the Test bind mounts.' }" ^
-  "$root = (Get-Item -LiteralPath '.').FullName; $comparison = [StringComparison]::OrdinalIgnoreCase;" ^
-  "$targets = @($minio.source, $logs.source, (Join-Path $root 'data\oracle')) | ForEach-Object { [IO.Path]::GetFullPath($_) };" ^
-  "foreach ($target in $targets) {" ^
-  "    if (-not $target.StartsWith($root.TrimEnd('\') + '\', $comparison)) { throw ('Test data directory is outside this deployment: ' + $target) }" ^
-  "    for ($path = $target; -not $path.Equals($root, $comparison); $path = [IO.Path]::GetDirectoryName($path)) {" ^
-  "        $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue;" ^
-  "        if ($item -and (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint))) { throw ('Unsafe Test data directory: ' + $path) }" ^
-  "    }" ^
-  "}" ^
-  "if ($env:RESET_FILE_ACTION -eq 'delete') {" ^
-  "    foreach ($target in $targets) { if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force } }" ^
-  "}"
-exit /b %ERRORLEVEL%
-
-:reset_data
->"%RESET_PROJECT_FILE%.pending" echo(%PROJECT_NAME%
-if errorlevel 1 exit /b %ERRORLEVEL%
-
-echo.
-echo Reset confirmed. Stopping containers and deleting all persistent test data...
-docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" down -v --remove-orphans
-if errorlevel 1 exit /b %ERRORLEVEL%
-
-call :reset_test_files delete
-if errorlevel 1 exit /b %ERRORLEVEL%
-
-move /Y "%RESET_PROJECT_FILE%.pending" "%RESET_PROJECT_FILE%" >nul
-if errorlevel 1 exit /b %ERRORLEVEL%
-call :use_grcone_database
-exit /b 0
 
 :use_grcone_database
 set "DB_USERNAME=GRCONE"
 set "DB_SCHEMA=GRCONE"
 set "DB_URL=jdbc:oracle:thin:@//oracle:1521/FREEPDB1"
+for /F "tokens=1,* delims==" %%a in ('findstr /r /x /c:"APP_PORT=[0-9][0-9]*" /c:"ORACLE_PORT=[0-9][0-9]*" /c:"MINIO_API_PORT=[0-9][0-9]*" /c:"MINIO_CONSOLE_PORT=[0-9][0-9]*" "%RESET_PROJECT_FILE%"') do set "%%a=%%b"
 exit /b 0
 
 :prepare_dirs
@@ -371,6 +331,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if /I "%MODE%"=="check_config" exit /b 0
+
 echo Checking Docker engine...
 docker info >nul 2>&1
 if not errorlevel 1 (
@@ -413,7 +375,7 @@ if defined GRCONE_TEST_PROJECT (
     set "PROJECT_NAME=%GRCONE_TEST_PROJECT%"
 ) else if defined RESET_PROJECT (
     set "PROJECT_NAME=!RESET_PROJECT!"
-) else (
+) else if /I not "%MODE%"=="check_config" (
     set "EXISTING_TEST_PROJECT="
     for %%p in (grcone-test digigrcone-test grcpc-test) do (
         docker volume inspect "%%p_oracle-data" >nul 2>&1
@@ -464,6 +426,35 @@ if exist test.env (
 if "%RESET_PROJECT_SOURCE%"=="%RESET_PROJECT_FILE%" if "%PROJECT_NAME%"=="%RESET_PROJECT%" call :use_grcone_database
 exit /b 0
 
+:compose_check_config
+docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" config --quiet
+if errorlevel 1 exit /b %ERRORLEVEL%
+echo Test configuration is valid. Oracle connectivity was not checked.
+exit /b 0
+
+:run_db_check
+if not exist "%APP_JAR%" (
+    echo ERROR: Runtime JAR is missing: %APP_JAR%
+    exit /b 1
+)
+powershell -NoProfile -Command ^
+  "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; $jar = [IO.Compression.ZipFile]::OpenRead((Join-Path (Get-Location).Path $env:APP_JAR)); try { if (-not $jar.GetEntry('BOOT-INF/classes/com/digiaudit/grcone/runtime/StageDatabaseCommand.class')) { exit 1 } } finally { $jar.Dispose() }"
+if errorlevel 1 (
+    echo ERROR: Runtime JAR lacks the Oracle check commands. Install the updated application JAR.
+    exit /b 1
+)
+if /I "%MODE%"=="check" if exist "%RESET_PROJECT_FILE%.pending" (
+    echo ERROR: A previous reset was interrupted. Run --reset again to finish it.
+    exit /b 1
+)
+if /I "%MODE%"=="check" if not exist "%RESET_PROJECT_FILE%" (
+    call :manage_test_installation recover
+    if errorlevel 1 exit /b !ERRORLEVEL!
+    if exist "%RESET_PROJECT_FILE%" call :use_grcone_database
+)
+docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" run --rm --no-deps --entrypoint java app -jar grcone-app.jar %~1
+exit /b %ERRORLEVEL%
+
 :is_environment_running
 set "RUNNING_CONTAINER="
 for /F "delims=" %%i in ('docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" ps --status running -q 2^>nul') do (
@@ -476,13 +467,14 @@ exit /b 1
 
 :start_attached
 echo Starting in ATTACHED mode.
+if defined APP_PORT echo Application host port: %APP_PORT%
 echo Press Ctrl+C to stop the environment.
 echo.
 docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" up --force-recreate --remove-orphans app
 set "COMPOSE_EXIT_CODE=%ERRORLEVEL%"
 echo.
 echo Attached session ended. Ensuring GRCONE services are stopped...
-docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" down --remove-orphans >nul 2>&1
+docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" stop >nul 2>&1
 echo GRCONE test environment is stopped. Persistent data was preserved.
 exit /b %COMPOSE_EXIT_CODE%
 
@@ -560,6 +552,10 @@ echo.
 echo   grcone-app.test.bat grcone-app-1.1.0.jar --reset
 echo       Same confirmation, then reset and use another jar.
 echo.
+echo   grcone-app.test.bat --check-config
+echo       Validate Docker Compose settings without connecting to Oracle.
+echo   grcone-app.test.bat --check
+echo       Check a running Test Oracle using a temporary table.
 echo   grcone-app.test.bat --check-schema-copy
 echo   grcone-app.test.bat --status
 echo   grcone-app.test.bat --logs
@@ -570,3 +566,282 @@ echo --down preserves persistent data.
 echo --reset destroys persistent test data only after explicit confirmation.
 echo.
 exit /b 0
+
+# Test reset PowerShell
+$ErrorActionPreference = 'Stop'
+
+function Get-LocalPath([string]$Path) {
+    if ($Path -match '^/(?:run/desktop/mnt/host|host_mnt|mnt)/([a-z])/(.*)$') {
+        $Path = $Matches[1] + ':\' + $Matches[2]
+    }
+    if ($Path -notmatch '^(?:[a-z]:[\\/]|\\\\[^\\]+\\[^\\]+)') {
+        throw "Cannot verify the Windows path: $Path"
+    }
+    [IO.Path]::GetFullPath($Path)
+}
+
+function Assert-ResetTarget($Target) {
+    $root = Get-LocalPath $Target.Root
+    $path = Get-LocalPath $Target.Path
+    $prefix = $root.TrimEnd('\') + '\'
+    if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -or
+        $path.TrimEnd('\') -eq $root.TrimEnd('\')) {
+        throw "Test data directory is outside its deployment: $path"
+    }
+    while ($path) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        if ($item -and (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint))) {
+            throw "Unsafe Test data directory: $path"
+        }
+        $path = [IO.Path]::GetDirectoryName($path)
+    }
+}
+
+function Get-PreviousTest($Containers) {
+    $directories = @(
+        foreach ($container in $Containers) {
+            $labels = $container.Config.Labels
+            $root = Get-LocalPath $labels.'com.docker.compose.project.working_dir'
+            $configFile = Join-Path $root 'compose.test.yml'
+            $files = $labels.'com.docker.compose.project.config_files' -split ',' | ForEach-Object { Get-LocalPath $_ }
+            if ($configFile -notin $files) {
+                throw "Docker project $env:PROJECT_NAME belongs to a different deployment."
+            }
+            $root
+        }
+    ) | Select-Object -Unique
+    if (@($directories).Count -ne 1) { throw 'The existing Test containers use different installation directories.' }
+    $recordedRoot = $directories | Select-Object -First 1
+    $dataRoot = $recordedRoot
+    if (-not (Test-Path -LiteralPath $recordedRoot -PathType Container)) {
+        # Docker may still have the paths from before the GRCONE repository rename.
+        $renamedRoot = $recordedRoot -replace '(?<=\\)digiaudit-(?:grcpc|digigrcone)(?=\\|$)', 'digiaudit-grcone'
+        if ($renamedRoot -ne $recordedRoot -and (Test-Path -LiteralPath (Join-Path $renamedRoot 'compose.test.yml') -PathType Leaf)) {
+            $dataRoot = $renamedRoot
+        }
+    }
+    $targets = @(
+        foreach ($container in $Containers) {
+            $service = $container.Config.Labels.'com.docker.compose.service'
+            foreach ($mount in $container.Mounts) {
+                if ($mount.Type -ne 'bind') { continue }
+                if (($service -eq 'minio' -and $mount.Destination -eq '/data') -or
+                    ($service -eq 'oracle' -and $mount.Destination -eq '/opt/oracle/oradata') -or
+                    ($service -eq 'app' -and $mount.Destination -match '^/opt/(?:grcpc|digigrcone|grcone)/logs$')) {
+                    $target = @{ Root = $recordedRoot; Path = (Get-LocalPath $mount.Source) }
+                    Assert-ResetTarget $target
+                    $relative = $target.Path.Substring($recordedRoot.TrimEnd('\').Length + 1)
+                    @{ Root = $dataRoot; Path = (Join-Path $dataRoot $relative) }
+                }
+            }
+        }
+        @{ Root = $dataRoot; Path = (Join-Path $dataRoot 'data\oracle') }
+    )
+    [pscustomobject]@{ RecordedRoot = $recordedRoot; DataRoot = $dataRoot; Targets = $targets }
+}
+
+function Get-TestPorts($Config) {
+    $requested = [ordered]@{
+        APP_PORT = ($Config.services.app.ports | Where-Object target -eq 8080).published
+        ORACLE_PORT = ($Config.services.oracle.ports | Where-Object target -eq 1521).published
+        MINIO_API_PORT = ($Config.services.minio.ports | Where-Object target -eq 9000).published
+        MINIO_CONSOLE_PORT = ($Config.services.minio.ports | Where-Object target -eq 9001).published
+    }
+    $listeners = @()
+    try {
+        foreach ($key in $requested.Keys) {
+            $port = [int]$requested[$key]
+            $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $port)
+            $listener.ExclusiveAddressUse = $true
+            try {
+                $listener.Start()
+            } catch [Net.Sockets.SocketException] {
+                $listener.Stop()
+                $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, 0)
+                $listener.ExclusiveAddressUse = $true
+                $listener.Start()
+            }
+            $listeners += $listener
+            $selected = $listener.LocalEndpoint.Port
+            if ($port -ne $selected) { Write-Host "$key uses available port $selected." }
+            "$key=$selected"
+        }
+    } finally {
+        foreach ($listener in $listeners) { $listener.Stop() }
+    }
+}
+
+function Save-TestSettings($Marker, $Project, $Ports) {
+    $next = "$Marker.next"
+    [IO.File]::WriteAllLines($next, @($Project) + @($Ports))
+    if (Test-Path -LiteralPath $Marker) {
+        [IO.File]::Replace($next, $Marker, [NullString]::Value)
+    } else {
+        [IO.File]::Move($next, $Marker)
+    }
+}
+
+function Read-TestCompose($Arguments) {
+    $config = docker @Arguments config --format json | Out-String | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or -not $config) { throw 'Could not read the Test Compose configuration.' }
+    $config
+}
+
+function Restore-TestSettings($Containers, $Compose, $Marker, $Project) {
+    $services = @{}
+    foreach ($container in $Containers) {
+        $services[$container.Config.Labels.'com.docker.compose.service'] = $container
+    }
+    if (@($services.app.Config.Env) -cnotcontains 'DB_SCHEMA=GRCONE' -and
+        @($services.oracle.Config.Env) -cnotcontains 'APP_USER=GRCONE') { return }
+
+    if (($services.app -and @($services.app.Config.Env) -cnotcontains 'DB_SCHEMA=GRCONE') -or
+        ($services.oracle -and @($services.oracle.Config.Env) -cnotcontains 'APP_USER=GRCONE')) {
+        throw 'The existing Test containers disagree on the Oracle schema. Recover the original Test settings before starting.'
+    }
+    $env:DB_USERNAME = 'GRCONE'
+    $env:DB_SCHEMA = 'GRCONE'
+    $env:DB_URL = 'jdbc:oracle:thin:@//oracle:1521/FREEPDB1'
+    $config = Read-TestCompose $Compose
+
+    $required = @{
+        app = @('DB_USERNAME', 'DB_PASSWORD', 'DB_URL', 'GRCONE_MINIO_ACCESS_KEY', 'GRCONE_MINIO_SECRET_KEY')
+        oracle = @('APP_USER_PASSWORD')
+        minio = @('MINIO_ROOT_USER', 'MINIO_ROOT_PASSWORD')
+    }
+    foreach ($service in $required.Keys) {
+        if (-not $services[$service]) { continue }
+        foreach ($key in $required[$service]) {
+            $value = $config.services.$service.environment.$key
+            if ($services[$service].Config.Env -cnotcontains "$key=$value") {
+                throw 'The saved Test settings differ from the existing containers. Restore the original Test env files before starting.'
+            }
+        }
+    }
+
+    if ($services.minio) {
+        $current = $services.minio.Mounts | Where-Object Destination -eq '/data'
+        $configured = $config.services.minio.volumes | Where-Object target -eq '/data'
+        if ($current.Type -ne 'bind' -or (Get-LocalPath $current.Source) -ne (Get-LocalPath $configured.source)) {
+            throw 'The existing Test uses a different MinIO directory. Restore its Test settings before starting.'
+        }
+    }
+    $bindings = [ordered]@{
+        APP_PORT = $services.app.HostConfig.PortBindings.'8080/tcp'
+        ORACLE_PORT = $services.oracle.HostConfig.PortBindings.'1521/tcp'
+        MINIO_API_PORT = $services.minio.HostConfig.PortBindings.'9000/tcp'
+        MINIO_CONSOLE_PORT = $services.minio.HostConfig.PortBindings.'9001/tcp'
+    }
+    $ports = foreach ($key in $bindings.Keys) {
+        $port = ($bindings[$key] | Select-Object -First 1).HostPort
+        if ($port -match '^\d+$') { "$key=$port" }
+    }
+    Save-TestSettings $Marker $Project $ports
+    Write-Host "Recovered GRCONE settings from Docker Test project $Project."
+}
+
+try {
+    $project = $env:PROJECT_NAME
+    if ($project -notmatch '^[a-z0-9][a-z0-9_-]*$') { throw 'Invalid Test project name.' }
+    $currentRoot = (Get-Item -LiteralPath '.').FullName
+    $marker = Join-Path $currentRoot $env:RESET_PROJECT_FILE
+    $pendingFile = "$marker.pending"
+    $extra = @($env:COMPOSE_ENV -split ' ' | Where-Object { $_ })
+    $compose = @('compose') + $extra + @('-f', $env:COMPOSE_FILE, '-p', $project)
+
+    $ids = @(docker ps --all --quiet --filter "label=com.docker.compose.project=$project")
+    if ($LASTEXITCODE -ne 0) { throw 'Could not identify existing Test containers.' }
+    $previous = $null
+    $containers = @()
+    if ($ids.Count) {
+        $containers = docker container inspect @ids | Out-String | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or -not $containers) { throw 'Could not inspect existing Test containers.' }
+        $previous = Get-PreviousTest $containers
+    }
+
+    if ($env:TEST_INSTALLATION_ACTION -eq 'recover') {
+        if ($previous -and $previous.RecordedRoot -ne $currentRoot) {
+            throw "Start the existing Test from $($previous.RecordedRoot)."
+        }
+        if ($previous) {
+            Restore-TestSettings $containers $compose $marker $project
+        } elseif ($env:PACKAGE_START -eq 'true' -and $project -eq 'grcone-test' -and
+                  -not (Test-Path -LiteralPath 'test.env') -and -not (Test-Path -LiteralPath '.env')) {
+            docker volume inspect "$($project)_oracle-data" *> $null
+            if ($LASTEXITCODE -ne 0) {
+                Save-TestSettings $marker $project @(Get-TestPorts (Read-TestCompose $compose))
+            }
+        }
+        exit 0
+    }
+
+    $config = Read-TestCompose $compose
+    $minio = $config.services.minio.volumes | Where-Object { $_.type -eq 'bind' -and $_.target -eq '/data' }
+    $logs = $config.services.app.volumes | Where-Object { $_.type -eq 'bind' -and $_.target -eq '/opt/grcone/logs' }
+    if (-not ($minio.source -and $logs.source)) { throw 'Could not identify the Test bind mounts.' }
+    $targets = @(
+        @{ Root = $currentRoot; Path = (Get-LocalPath $minio.source) }
+        @{ Root = $currentRoot; Path = (Get-LocalPath $logs.source) }
+        @{ Root = $currentRoot; Path = (Join-Path $currentRoot 'data\oracle') }
+    )
+    if ($previous) { $targets += $previous.Targets }
+    $plan = $null
+    if (Test-Path -LiteralPath $pendingFile -PathType Leaf) {
+        $saved = @(Get-Content -LiteralPath $pendingFile -Encoding UTF8)
+        if ($saved[0] -ne $project) { throw 'The pending reset belongs to a different Test project.' }
+        if ($saved.Count -gt 1) {
+            $plan = $saved[1] | ConvertFrom-Json
+            if ($plan.Directory -ne $currentRoot -or ($previous -and $plan.PreviousDirectory -ne $previous.RecordedRoot)) {
+                throw 'The Test installation changed since the previous reset attempt.'
+            }
+            $targets += @($plan.Targets)
+        }
+    }
+    $targets = @($targets | Sort-Object -Property { $_.Path } -Unique)
+    foreach ($target in $targets) { Assert-ResetTarget $target }
+
+    Write-Host "Docker Test project: $project"
+    if ($previous) {
+        Write-Host "Previous Test installation: $($previous.RecordedRoot)"
+        if ($previous.DataRoot -ne $previous.RecordedRoot) {
+            Write-Host "Relocated Test data found at: $($previous.DataRoot)"
+        }
+    }
+    Write-Host "New Test installation: $currentRoot"
+    Write-Host 'Reset permanently deletes the Test Oracle volume and these existing data directories:' -ForegroundColor Yellow
+    foreach ($target in $targets) {
+        if (Test-Path -LiteralPath $target.Path) { Write-Host ('  ' + $target.Path) }
+    }
+    $question = 'Delete this Test and start again with schema GRCONE? [y/N]'
+    if ([Console]::IsInputRedirected) {
+        Write-Host $question
+        $answer = [Console]::ReadLine()
+    } else {
+        $answer = Read-Host $question
+    }
+    if ($answer -notin @('y', 'yes')) {
+        Write-Host 'Reset cancelled. No persistent data was changed.'
+        exit 2
+    }
+
+    $recordedDirectory = $null
+    if ($previous) { $recordedDirectory = $previous.RecordedRoot }
+    elseif ($plan) { $recordedDirectory = $plan.PreviousDirectory }
+    $plan = @{
+        Directory = $currentRoot
+        PreviousDirectory = $recordedDirectory
+        Targets = $targets
+    }
+    [IO.File]::WriteAllLines($pendingFile, @($project, ($plan | ConvertTo-Json -Depth 4 -Compress)))
+    docker @compose down -v --remove-orphans
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    foreach ($target in $targets) {
+        Assert-ResetTarget $target
+        if (Test-Path -LiteralPath $target.Path) { Remove-Item -LiteralPath $target.Path -Recurse -Force }
+    }
+    Save-TestSettings $marker $project @(Get-TestPorts $config)
+    Remove-Item -LiteralPath $pendingFile
+} catch {
+    [Console]::Error.WriteLine('ERROR: ' + $_.Exception.Message)
+    exit 1
+}

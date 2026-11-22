@@ -8,6 +8,7 @@ COMPOSE_ENV=()
 COMPOSE_FILE="compose.test.yml"
 APP_JAR="grcone-app.jar"
 SELECTED_JAR_FILE=".grcone-selected-jar.txt"
+RESET_PROJECT_FILE=".grcone-test-reset-project"
 MODE="up"
 RESET_DATA="false"
 DETACH="false"
@@ -57,6 +58,8 @@ Use another jar:
 Management:
   ./grcone-app.test.sh --status
   ./grcone-app.test.sh --logs
+  ./grcone-app.test.sh --check-config   Validate Docker Compose settings
+  ./grcone-app.test.sh --check          Check a running Test Oracle using a temporary table
   ./grcone-app.test.sh --check-schema-copy
   ./grcone-app.test.sh --down
   ./grcone-app.test.sh --help
@@ -81,6 +84,12 @@ parse_args() {
                 ;;
             --status|status|--ps)
                 MODE="status"
+                ;;
+            --check-config)
+                MODE="check_config"
+                ;;
+            --check)
+                MODE="check"
                 ;;
             --check-schema-copy)
                 MODE="schema_copy_check"
@@ -131,10 +140,20 @@ compose() {
 }
 
 select_test_installation() {
-    local candidate selected=""
+    local candidate selected="" saved_project=""
+    if [[ -f "$RESET_PROJECT_FILE" ]]; then
+        IFS= read -r saved_project < "$RESET_PROJECT_FILE" || true
+        saved_project="${saved_project%$'\r'}"
+        if [[ ! "$saved_project" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+            echo "ERROR: Invalid generated Test project file: $RESET_PROJECT_FILE"
+            return 1
+        fi
+    fi
     if [[ -n "${GRCONE_TEST_PROJECT:-}" ]]; then
         PROJECT_NAME="$GRCONE_TEST_PROJECT"
-    else
+    elif [[ -n "$saved_project" ]]; then
+        PROJECT_NAME="$saved_project"
+    elif [[ "$MODE" != "check_config" ]]; then
         for candidate in grcone-test digigrcone-test grcpc-test; do
             if docker volume inspect "${candidate}_oracle-data" >/dev/null 2>&1; then
                 if [[ -n "$selected" ]]; then
@@ -168,6 +187,22 @@ select_test_installation() {
         if [[ -f .env ]]; then COMPOSE_ENV+=(--env-file .env); fi
         COMPOSE_ENV+=(--env-file test.env)
     fi
+    if [[ "$PROJECT_NAME" == "$saved_project" ]]; then
+        apply_saved_test_settings
+    fi
+}
+
+apply_saved_test_settings() {
+    export DB_USERNAME=GRCONE DB_SCHEMA=GRCONE DB_URL=jdbc:oracle:thin:@//oracle:1521/FREEPDB1
+    local key value
+    while IFS='=' read -r key value; do
+        case "$key" in
+            APP_PORT|ORACLE_PORT|MINIO_API_PORT|MINIO_CONSOLE_PORT)
+                value="${value%$'\r'}"
+                if [[ "$value" =~ ^[0-9]+$ ]]; then export "$key=$value"; fi
+                ;;
+        esac
+    done < "$RESET_PROJECT_FILE"
 }
 
 check_docker() {
@@ -182,6 +217,8 @@ check_docker() {
         echo "ERROR: Docker Compose v2 plugin is not available."
         return 1
     fi
+
+    if [[ "$MODE" == "check_config" ]]; then return 0; fi
 
     echo "Checking Docker engine..."
     if ! docker info >/dev/null 2>&1; then
@@ -311,6 +348,28 @@ compose_logs() {
     compose logs -f
 }
 
+compose_check_config() {
+    compose config --quiet || return $?
+    echo "Test configuration is valid. Oracle connectivity was not checked."
+}
+
+run_db_check() {
+    if [[ ! -f "$APP_JAR" || ! -r "$APP_JAR" ]]; then
+        echo "ERROR: Runtime JAR is missing or unreadable: $APP_JAR"
+        return 1
+    fi
+    if ! LC_ALL=C grep -aFq \
+        'BOOT-INF/classes/com/digiaudit/grcone/runtime/StageDatabaseCommand.class' "$APP_JAR"; then
+        echo "ERROR: Runtime JAR lacks the Oracle check commands. Install the updated application JAR."
+        return 1
+    fi
+    if [[ "$MODE" == "check" && -f "$RESET_PROJECT_FILE.pending" ]]; then
+        echo "ERROR: A previous reset was interrupted. Finish that reset before checking Oracle."
+        return 1
+    fi
+    compose run --rm --no-deps --entrypoint java app -jar grcone-app.jar "$1"
+}
+
 wait_for_app_port() {
     local address port i
     address="$(compose port app 8080)" || return 1
@@ -382,6 +441,10 @@ main() {
         echo "ERROR: --reset is only valid when starting the environment."
         return 1
     fi
+    if [[ -n "$JAR_SOURCE" && ( "$MODE" == "check" || "$MODE" == "check_config" ) ]]; then
+        echo "ERROR: --check and --check-config use the installed Test files."
+        return 1
+    fi
     if [[ ! -f "$COMPOSE_FILE" ]]; then
         echo "ERROR: Compose file not found: $SCRIPT_DIR/$COMPOSE_FILE"
         return 1
@@ -394,11 +457,9 @@ main() {
         status) compose_status; return $? ;;
         down) compose_down; return $? ;;
         logs) compose_logs; return $? ;;
-        schema_copy_check)
-            compose run --rm --no-deps --entrypoint java app \
-                -jar /opt/grcone/grcone-app.jar --schema-copy-check
-            return $?
-            ;;
+        check_config) compose_check_config; return $? ;;
+        check) run_db_check --stage-db-check; return $? ;;
+        schema_copy_check) run_db_check --schema-copy-check; return $? ;;
         up) ;;
         *) echo "ERROR: Unsupported mode: $MODE"; return 1 ;;
     esac

@@ -523,13 +523,8 @@
   "local.assign.control": "Assign Control to Organization",
   "local.assign.submit": "Assign",
   "local.assign.openExisting": "Open existing context",
-  "local.reverse.riskScopes": "Risk template assignments",
   "local.reverse.objectiveScopes": "Control objective assignments",
   "local.reverse.requirementScopes": "Requirement assignments",
-  "local.reverse.organizationPolicies": "Organization policy decisions",
-  "local.reverse.contextPolicies": "Context policy decisions",
-  "local.reverse.controlPolicies": "Control policy decisions",
-  "local.reverse.requirementPolicies": "Requirement policy decisions",
   "local.reverse.open": "Open in Organization",
   "local.retry": "Retry",
   "centralAssignment": {

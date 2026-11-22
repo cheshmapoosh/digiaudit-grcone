@@ -2,7 +2,8 @@
 
 Put `grcone-app.stage.sh`, `compose.stage.yml`, `grcone-app.jar`, and `stage.env`
 in the same deployment directory, with the proxy script at
-`docker/nginx/start.sh`. Load the Java, MinIO and Nginx images before starting.
+`docker/nginx/start.sh`. Load the Java and MinIO images before starting, and
+load the Nginx image when using the bundled proxy.
 Set `PUBLIC_HOST` to the server's IP address or domain. For HTTPS, set
 `PUBLIC_SCHEME=https` and mount the certificate and key with `NGINX_TLS_DIR`.
 See the [Docker environments guide](README.md#stage-and-production-with-external-oracle).
@@ -29,6 +30,39 @@ bash ./grcone-app.stage.sh --check-config
 bash ./grcone-app.stage.sh --detach
 bash ./grcone-app.stage.sh --logs
 ```
+
+The Java app logs `Oracle target:` before Spring initializes its database
+connections. A different configured Flyway URL is reported separately. The
+Java maintenance commands report their target before asking JDBC to connect.
+Both paths omit credentials and JDBC URL options.
+
+### Start without the bundled Nginx
+
+Set this in the existing `stage.env`:
+
+```dotenv
+STAGE_NGINX_ENABLED=false
+```
+
+Start with the usual command:
+
+```bash
+bash ./grcone-app.stage.sh
+```
+
+This stops and removes any bundled Nginx container in the selected Stage
+project. The runner supplies the direct port settings to Compose, so the bundle
+uses one Compose file. Java serves HTTP on `APP_PORT` (default `8080`) and the MinIO API
+uses `STAGE_MINIO_API_PORT` (default `9000`). Signed document URLs use
+`http://PUBLIC_HOST:STAGE_MINIO_API_PORT` by default. An explicit
+`GRCONE_MINIO_PUBLIC_ENDPOINT` still takes precedence.
+
+For HTTPS behind your own reverse proxy, terminate TLS there and configure a
+browser-accessible MinIO URL. Set `STAGE_DIRECT_BIND_ADDRESS=127.0.0.1` if a
+proxy on the same host should be the only entry point to both ports. Set
+`STAGE_NGINX_ENABLED=true` to return to the bundled proxy. The default is `true`
+when the setting is absent. The `--no-nginx` argument remains available as a
+one-time override.
 
 To change the Oracle schema name as part of a separate database operation,
 have the Oracle administrator export the current schema and import it into a

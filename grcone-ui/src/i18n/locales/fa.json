@@ -523,13 +523,8 @@
   "local.assign.control": "انتساب کنترل به سازمان",
   "local.assign.submit": "ثبت انتساب",
   "local.assign.openExisting": "نمایش زمینهٔ موجود",
-  "local.reverse.riskScopes": "انتساب‌های این الگوی ریسک",
   "local.reverse.objectiveScopes": "انتساب‌های این هدف کنترل",
   "local.reverse.requirementScopes": "انتساب‌های این الزام",
-  "local.reverse.organizationPolicies": "تصمیم‌های سیاست برای سازمان",
-  "local.reverse.contextPolicies": "تصمیم‌های سیاست برای زمینه",
-  "local.reverse.controlPolicies": "تصمیم‌های سیاست برای کنترل",
-  "local.reverse.requirementPolicies": "تصمیم‌های سیاست برای الزام",
   "local.reverse.open": "نمایش در سازمان",
   "local.retry": "بارگذاری مجدد",
   "centralAssignment": {

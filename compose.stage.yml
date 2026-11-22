@@ -77,7 +77,16 @@ services:
       ROOT_LOG_LEVEL: ${ROOT_LOG_LEVEL:-INFO}
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
       JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx1024m}
-    command: ["sh", "-c", "exec java $${JAVA_OPTS:-} -jar /opt/grcone/grcone-app.jar"]
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ "$$#" -gt 0 ]; then
+          exec java -jar /opt/grcone/grcone-app.jar "$$@"
+        fi
+        exec java $${JAVA_OPTS:-} -jar /opt/grcone/grcone-app.jar
+      - grcone-stage
+    command: []
 
   nginx:
     image: ${NGINX_IMAGE:-nginx:1.28-alpine}

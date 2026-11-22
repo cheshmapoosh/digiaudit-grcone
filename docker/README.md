@@ -7,7 +7,7 @@ for object storage in every environment.
 | --- | --- | --- |
 | `dev` | Java 21 app, MinIO, Oracle Free | Local container |
 | `test` | Java 21 app, MinIO, Oracle Free | Local container |
-| `stage` | Nginx, Java 21 app, MinIO | External Oracle |
+| `stage` | Java 21 app, MinIO, optional Nginx | External Oracle |
 | `prod` | Nginx, Java 21 app, MinIO | External Oracle |
 
 ## Build the deliverable JARs
@@ -86,8 +86,9 @@ docker compose --env-file prod.env -f compose.prod.yml up -d
 
 Use separate deployment directories for test, stage and prod. Use distinct
 published ports if the environments share a host. Stage expects its Java, MinIO and Nginx
-images to have already been loaded on the host. See the [stage runner guide](README.stage.md)
-for its commands and file layout.
+images to have already been loaded on the host when their services are enabled.
+See the [stage runner guide](README.stage.md) for its commands and file layout,
+including direct HTTP with the bundled Nginx disabled.
 
 Configure the Nginx entry point in the deployment env file:
 
@@ -105,7 +106,7 @@ after changing the env file. Restart Nginx after renewing the certificate
 files. The selected port serves the selected scheme.
 
 Nginx publishes one port for the app and its signed MinIO downloads. MinIO's
-API and console are internal in stage and prod. Remove a legacy
+API and console stay internal when using this proxy. Remove a legacy
 `GRCONE_MINIO_PUBLIC_ENDPOINT` or `MINIO_PUBLIC_ENDPOINT` setting when using
 downloads through Nginx. An explicit endpoint is useful for deployments that
 already have a separate storage gateway. If the MinIO deployment uses a

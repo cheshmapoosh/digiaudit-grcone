@@ -10,7 +10,6 @@ import { RiskTemplateControlAssignmentsTab, useRiskControlAssignmentPermissions 
 import { RiskTemplateControlObjectiveAssignmentsTab, useRiskControlObjectiveAssignmentPermissions } from "@/features/risk-control-objective-assignment";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { LocalReverseList } from "@/features/local-master-data";
 import { CatalogActionButton as Button } from "@/shared/components/CatalogActionButton";
 import { Text, ObjectStatus, Input, Label, MessageStrip, Option, Select, Tab, TextArea } from "@ui5/webcomponents-react";
 
@@ -532,17 +531,6 @@ export default function CentralRiskObjectPage({
             />
           </div>
         </div>
-
-        {templateId && readOnly ? (
-          <div hidden={selectedTab === "controls" || selectedTab === "controlObjectives"}>
-            <LocalReverseList
-              parentId={templateId}
-              path={`central/risk-templates/${templateId}/risk-scopes`}
-              section="risk-scopes"
-              titleKey="local.reverse.riskScopes" titleFa="انتساب‌های این الگوی ریسک"
-              areas={["PROCESS", "RISK"]} />
-          </div>
-        ) : null}
 
         <DialogFooter>
           {mode === "view" ? (
