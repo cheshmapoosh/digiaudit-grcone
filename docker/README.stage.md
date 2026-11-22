@@ -11,7 +11,7 @@ the template is `docker/env/stage.env.example`. Keep the template in that path
 when copying the full repository, or copy it beside the runner as
 `stage.env.example` for a portable deployment bundle.
 Build and deploy a new application JAR containing `StageDatabaseCommand` before
-using `--check` or `--init`; the runner rejects older JARs.
+using `--check` or `--reset`; the runner rejects older JARs.
 
 ## Update an existing installation
 
@@ -46,7 +46,7 @@ Run these commands from the deployment directory:
 ```bash
 ./grcone-app.stage.sh --check-config
 ./grcone-app.stage.sh --check
-./grcone-app.stage.sh --init --detach
+./grcone-app.stage.sh --reset --detach
 ./grcone-app.stage.sh --logs
 ```
 
@@ -66,7 +66,7 @@ set -o pipefail
 ./grcone-app.stage.sh --check 2>&1 | tee stage-check.log
 ```
 
-`--init` requires an interactive `RESET` confirmation. It stops the stage
+`--reset` requires an interactive `RESET` confirmation. It stops the stage
 containers, uses Flyway `clean` on **all objects in `DB_SCHEMA`**, runs all
 packaged migrations from the beginning, and starts the containers. This
 permanently deletes the schema's tables and data, including Flyway history.
@@ -74,6 +74,7 @@ It does not delete MinIO files. `DB_SCHEMA` must equal the connected Oracle
 user's own current schema; Oracle-maintained schemas are refused. Use a dedicated schema
 and stop other processes connected to it before initialization. If a migration
 fails, the app is not started and the Flyway error appears in the command output.
+`--init` is a compatibility alias for `--reset`.
 
 The Java 21 `jre` container does not include `jshell`. The one-shot command in
 the packaged JAR uses its bundled Oracle JDBC driver and Flyway libraries, so

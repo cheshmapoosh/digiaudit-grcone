@@ -8,6 +8,7 @@ set "COMPOSE_ENV="
 set "COMPOSE_FILE=compose.test.yml"
 set "APP_JAR=grcone-app.jar"
 set "SELECTED_JAR_FILE=.grcone-selected-jar.txt"
+set "RESET_PROJECT_FILE=.grcone-test-reset-project"
 set "MODE=up"
 set "RESET_DATA=false"
 set "DETACH=false"
@@ -171,7 +172,19 @@ if /I "%MODE%"=="logs" (
 )
 if /I not "%MODE%"=="up" exit /b 1
 
+if /I not "%RESET_DATA%"=="true" if exist "%RESET_PROJECT_FILE%.pending" (
+    echo ERROR: A previous reset was interrupted. Run --reset again to finish it.
+    exit /b 1
+)
+
+call :validate_jar
+if errorlevel 1 exit /b %ERRORLEVEL%
+
 if /I "%RESET_DATA%"=="true" (
+    call :check_reset_project
+    if errorlevel 1 exit /b !ERRORLEVEL!
+    call :reset_test_files check
+    if errorlevel 1 exit /b !ERRORLEVEL!
     call :confirm_reset
     if errorlevel 1 exit /b !ERRORLEVEL!
     call :reset_data
@@ -205,6 +218,8 @@ call :start_attached
 exit /b %ERRORLEVEL%
 
 :confirm_reset
+echo Docker project: %PROJECT_NAME%
+echo Test directory: %CD%
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Write-Host ''; Write-Host 'WARNING: RESET WILL PERMANENTLY DELETE ALL TEST DATA.' -ForegroundColor Yellow; Write-Host '  - Oracle database named volume' -ForegroundColor Yellow; Write-Host '  - MinIO object data' -ForegroundColor Yellow; Write-Host '  - Application logs' -ForegroundColor Yellow; Write-Host '  - Legacy data/oracle directory, if present' -ForegroundColor Yellow; Write-Host 'This operation cannot be undone.' -ForegroundColor Yellow; Write-Host ''"
 if errorlevel 1 (
@@ -214,24 +229,72 @@ if errorlevel 1 (
     echo.
 )
 set "RESET_CONFIRM="
-set /P "RESET_CONFIRM=Continue with RESET? [y/N]: "
-if /I "%RESET_CONFIRM%"=="Y" exit /b 0
-if /I "%RESET_CONFIRM%"=="YES" exit /b 0
+set /P "RESET_CONFIRM=Delete this Test and start again with schema GRCONE? [y/N]: "
+if /I "!RESET_CONFIRM!"=="Y" exit /b 0
+if /I "!RESET_CONFIRM!"=="YES" exit /b 0
 echo.
 echo Reset cancelled. No persistent data was changed.
 exit /b 2
 
+:check_reset_project
+powershell -NoProfile -Command ^
+  "$ErrorActionPreference = 'Stop'; $filter = 'label=com.docker.compose.project=' + $env:PROJECT_NAME;" ^
+  "$ids = @(docker ps --all --quiet --filter $filter);" ^
+  "if ($LASTEXITCODE -ne 0) { throw 'Could not identify existing Test containers.' }" ^
+  "if ($ids.Count) {" ^
+  "    $containers = docker container inspect @ids | Out-String | ConvertFrom-Json;" ^
+  "    if ($LASTEXITCODE -ne 0 -or -not $containers) { throw 'Could not inspect existing Test containers.' }" ^
+  "    $compose = Join-Path (Get-Item -LiteralPath '.').FullName $env:COMPOSE_FILE;" ^
+  "    foreach ($container in $containers) {" ^
+  "        $files = $container.Config.Labels.'com.docker.compose.project.config_files' -split ',';" ^
+  "        if ($compose -notin $files) { throw ('Docker project ' + $env:PROJECT_NAME + ' belongs to a different deployment.') }" ^
+  "    }" ^
+  "}"
+exit /b %ERRORLEVEL%
+
+:reset_test_files
+set "RESET_FILE_ACTION=%~1"
+docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" config --format json | powershell -NoProfile -Command ^
+  "$ErrorActionPreference = 'Stop'; $config = $input | Out-String | ConvertFrom-Json;" ^
+  "$minio = $config.services.minio.volumes | Where-Object { $_.type -eq 'bind' -and $_.target -eq '/data' };" ^
+  "$logs = $config.services.app.volumes | Where-Object { $_.type -eq 'bind' -and $_.target -eq '/opt/grcone/logs' };" ^
+  "if (-not ($minio.source -and $logs.source)) { throw 'Could not identify the Test bind mounts.' }" ^
+  "$root = (Get-Item -LiteralPath '.').FullName; $comparison = [StringComparison]::OrdinalIgnoreCase;" ^
+  "$targets = @($minio.source, $logs.source, (Join-Path $root 'data\oracle')) | ForEach-Object { [IO.Path]::GetFullPath($_) };" ^
+  "foreach ($target in $targets) {" ^
+  "    if (-not $target.StartsWith($root.TrimEnd('\') + '\', $comparison)) { throw ('Test data directory is outside this deployment: ' + $target) }" ^
+  "    for ($path = $target; -not $path.Equals($root, $comparison); $path = [IO.Path]::GetDirectoryName($path)) {" ^
+  "        $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue;" ^
+  "        if ($item -and (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint))) { throw ('Unsafe Test data directory: ' + $path) }" ^
+  "    }" ^
+  "}" ^
+  "if ($env:RESET_FILE_ACTION -eq 'delete') {" ^
+  "    foreach ($target in $targets) { if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force } }" ^
+  "}"
+exit /b %ERRORLEVEL%
+
 :reset_data
+>"%RESET_PROJECT_FILE%.pending" echo(%PROJECT_NAME%
+if errorlevel 1 exit /b %ERRORLEVEL%
+
 echo.
 echo Reset confirmed. Stopping containers and deleting all persistent test data...
 docker compose %COMPOSE_ENV% -f "%COMPOSE_FILE%" -p "%PROJECT_NAME%" down -v --remove-orphans
 if errorlevel 1 exit /b %ERRORLEVEL%
-rem Also remove legacy bind-mount Oracle data from older packages.
-if exist "data\oracle" rmdir /S /Q "data\oracle"
-if exist "data\minio" rmdir /S /Q "data\minio"
-if exist "data\app" rmdir /S /Q "data\app"
-call :prepare_dirs
-exit /b %ERRORLEVEL%
+
+call :reset_test_files delete
+if errorlevel 1 exit /b %ERRORLEVEL%
+
+move /Y "%RESET_PROJECT_FILE%.pending" "%RESET_PROJECT_FILE%" >nul
+if errorlevel 1 exit /b %ERRORLEVEL%
+call :use_grcone_database
+exit /b 0
+
+:use_grcone_database
+set "DB_USERNAME=GRCONE"
+set "DB_SCHEMA=GRCONE"
+set "DB_URL=jdbc:oracle:thin:@//oracle:1521/FREEPDB1"
+exit /b 0
 
 :prepare_dirs
 if not exist "data" mkdir "data" >nul 2>&1
@@ -240,16 +303,23 @@ if not exist "data\app" mkdir "data\app" >nul 2>&1
 if not exist "data\app\logs" mkdir "data\app\logs" >nul 2>&1
 exit /b 0
 
-:prepare_jar
+:validate_jar
 if /I not "%JAR_SOURCE:~-4%"==".jar" (
     echo ERROR: The selected file is not a .jar file: %JAR_SOURCE%
     exit /b 1
 )
 if not exist "%JAR_SOURCE%" (
-    echo ERROR: Jar file not found: %CD%\%JAR_SOURCE%
+    echo ERROR: Jar file not found: %JAR_SOURCE%
     exit /b 1
 )
+for %%F in ("%JAR_SOURCE%") do set "JAR_SOURCE_ATTRIBUTES=%%~aF"
+if /I "%JAR_SOURCE_ATTRIBUTES:~0,1%"=="d" (
+    echo ERROR: Expected a JAR file, found a directory: %JAR_SOURCE%
+    exit /b 1
+)
+exit /b 0
 
+:prepare_jar
 for %%F in ("%JAR_SOURCE%") do set "JAR_SOURCE_FULL=%%~fF"
 for %%F in ("%APP_JAR%") do set "APP_JAR_FULL=%%~fF"
 
@@ -329,8 +399,20 @@ echo ERROR: Docker engine is not ready.
 exit /b 1
 
 :select_test_installation
+set "RESET_PROJECT="
+set "RESET_PROJECT_SOURCE=%RESET_PROJECT_FILE%"
+if /I "%RESET_DATA%"=="true" if exist "%RESET_PROJECT_FILE%.pending" set "RESET_PROJECT_SOURCE=%RESET_PROJECT_FILE%.pending"
+if exist "%RESET_PROJECT_SOURCE%" (
+    for /F "delims=" %%p in ('findstr /r /x "[a-z0-9][a-z0-9_-]*" "%RESET_PROJECT_SOURCE%"') do set "RESET_PROJECT=%%p"
+    if not defined RESET_PROJECT (
+        echo ERROR: Invalid generated Test project file: %RESET_PROJECT_SOURCE%
+        exit /b 1
+    )
+)
 if defined GRCONE_TEST_PROJECT (
     set "PROJECT_NAME=%GRCONE_TEST_PROJECT%"
+) else if defined RESET_PROJECT (
+    set "PROJECT_NAME=!RESET_PROJECT!"
 ) else (
     set "EXISTING_TEST_PROJECT="
     for %%p in (grcone-test digigrcone-test grcpc-test) do (
@@ -347,11 +429,18 @@ if defined GRCONE_TEST_PROJECT (
         for %%p in (digigrcone-test grcpc-test) do (
             docker container inspect "%%p-oracle" >nul 2>&1
             if not errorlevel 1 (
-                echo ERROR: Found a previous Test Oracle container with a different storage layout. Verify its mount before upgrading.
-                exit /b 1
+                if /I not "%RESET_DATA%"=="true" (
+                    echo ERROR: Found a previous Test Oracle container with a different storage layout. Verify its mount before upgrading.
+                    exit /b 1
+                )
+                if defined EXISTING_TEST_PROJECT (
+                    echo ERROR: Multiple Test projects exist. Select one with GRCONE_TEST_PROJECT.
+                    exit /b 1
+                )
+                set "EXISTING_TEST_PROJECT=%%p"
             )
         )
-        if exist "data\oracle\." (
+        if /I not "%RESET_DATA%"=="true" if exist "data\oracle\." (
             for /F "delims=" %%f in ('dir /b /a "data\oracle" 2^>nul') do (
                 echo ERROR: Found legacy Oracle files in data/oracle. Migrate the existing bind mount before starting this version.
                 exit /b 1
@@ -372,6 +461,7 @@ if "%PROJECT_NAME%"=="digigrcone-test" (
 if exist test.env (
     if exist .env (set "COMPOSE_ENV=--env-file .env --env-file test.env") else (set "COMPOSE_ENV=--env-file test.env")
 )
+if "%RESET_PROJECT_SOURCE%"=="%RESET_PROJECT_FILE%" if "%PROJECT_NAME%"=="%RESET_PROJECT%" call :use_grcone_database
 exit /b 0
 
 :is_environment_running
@@ -461,7 +551,8 @@ echo.
 echo   grcone-app.test.bat --reset
 echo       Show a destructive-reset warning and require y/yes confirmation.
 echo       If confirmed, remove Oracle named volume, MinIO data and logs,
-echo       then start attached with a fresh Oracle database.
+echo       then start attached with a fresh GRCONE Oracle schema.
+echo       The launcher remembers the chosen project and schema for future starts.
 echo.
 echo   grcone-app.test.bat --reset --detach
 echo       Same confirmation, then reset all test data and start detached.

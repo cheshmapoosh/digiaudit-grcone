@@ -12,6 +12,8 @@
 /dev.env
 /dev-local.properties
 /test.env
+/.grcone-test-reset-project
+/.grcone-test-reset-project.pending
 /grcone-ui/.env
 /.grcone-fresh-test/
 /tls/

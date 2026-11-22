@@ -20,8 +20,8 @@ Usage:
   ./grcone-app.stage.sh --check-config      Validate stage.env and Compose
   ./grcone-app.stage.sh --check             Check Oracle connection and temporary-table CRUD
   ./grcone-app.stage.sh --check-schema-copy Read Oracle permissions for a future schema copy
-  ./grcone-app.stage.sh --init              Clean the stage Oracle schema, migrate, and start
-  ./grcone-app.stage.sh --init --detach     Initialize and start in the background
+  ./grcone-app.stage.sh --reset             Clean the stage Oracle schema, migrate, and start
+  ./grcone-app.stage.sh --reset --detach    Reset and start in the background
   ./grcone-app.stage.sh                     Start attached using grcone-app.jar
   ./grcone-app.stage.sh --detach            Start in the background
   ./grcone-app.stage.sh /path/to/app.jar --detach
@@ -38,8 +38,9 @@ Compose, stage.env and the runtime grcone-app.jar live beside this script.
 MinIO files and application logs persist in data/minio and data/app/logs.
 Starting with a replacement JAR recreates the application and proxy.
 The application applies packaged Oracle migrations when FLYWAY_ENABLED=true.
---init permanently removes all objects in the configured Oracle schema.
+--reset permanently removes all objects in the configured Oracle schema.
 It requires an interactive RESET confirmation and does not erase MinIO files.
+--init remains an alias for --reset.
 --check creates and removes a uniquely named temporary table in that schema.
 EOF_USAGE
 }
@@ -59,7 +60,7 @@ parse_args() {
         case "$1" in
             --help|help|-h) set_mode help ;;
             --init-env|init-env) set_mode init_env ;;
-            --init|init) set_mode init ;;
+            --reset|reset|--init|init) set_mode reset ;;
             --check-config|check-config) set_mode check_config ;;
             --check|check) set_mode check ;;
             --check-schema-copy) set_mode schema_copy_check ;;
@@ -81,11 +82,11 @@ parse_args() {
         shift
     done
     MODE="${MODE:-up}"
-    if [[ "$MODE" != "up" && "$MODE" != "init" && ( "$DETACH" == "true" || -n "$JAR_SOURCE" ) ]]; then
+    if [[ "$MODE" != "up" && "$MODE" != "reset" && ( "$DETACH" == "true" || -n "$JAR_SOURCE" ) ]]; then
         fail "A JAR path and --detach are only valid when starting the environment."
     fi
-    if [[ "$MODE" == "init" && -n "$JAR_SOURCE" ]]; then
-        fail "Place the intended runtime JAR beside this script before --init; a JAR path is not accepted."
+    if [[ "$MODE" == "reset" && -n "$JAR_SOURCE" ]]; then
+        fail "Place the intended runtime JAR beside this script before --reset; a JAR path is not accepted."
     fi
     JAR_SOURCE="${JAR_SOURCE:-$APP_JAR}"
 }
@@ -149,7 +150,7 @@ require_runtime_jar() {
 run_db_command() {
     require_runtime_jar
     case "$1" in
-        init)
+        reset)
             compose run --rm --no-deps -e GRCONE_STAGE_DB_INIT_CONFIRMED=RESET \
                 --entrypoint java app -jar /opt/grcone/grcone-app.jar --stage-db-init
             ;;
@@ -164,14 +165,14 @@ run_db_command() {
     esac
 }
 
-confirm_init() {
+confirm_reset() {
     local answer=""
-    [[ -t 0 ]] || fail "--init requires an interactive terminal for destructive confirmation."
-    echo "WARNING: --init permanently removes ALL objects and data in the Oracle schema configured by DB_SCHEMA."
+    [[ -t 0 ]] || fail "--reset requires an interactive terminal for destructive confirmation."
+    echo "WARNING: --reset permanently removes ALL objects and data in the Oracle schema configured by DB_SCHEMA."
     echo "Flyway will rebuild that schema from the packaged migrations; MinIO files are preserved."
     echo "Stop any other application using this schema before continuing."
     read -r -p "Type RESET to continue: " answer || answer=""
-    [[ "$answer" == "RESET" ]] || fail "Initialization cancelled; no data was changed."
+    [[ "$answer" == "RESET" ]] || fail "Reset cancelled; no data was changed."
 }
 
 prepare_jar() {
@@ -206,7 +207,7 @@ main() {
         return
     fi
     if [[ ! -e "$ENV_FILE" && ! -L "$ENV_FILE" ]]; then
-        if [[ "$MODE" == "up" || "$MODE" == "check" || "$MODE" == "init" || "$MODE" == "check_config" || "$MODE" == "schema_copy_check" ]]; then
+        if [[ "$MODE" == "up" || "$MODE" == "check" || "$MODE" == "reset" || "$MODE" == "check_config" || "$MODE" == "schema_copy_check" ]]; then
             init_env
         fi
         fail "Configure stage.env, then run the command again (use --init-env to create it)."
@@ -227,11 +228,11 @@ main() {
         schema_copy_check)
             run_db_command schema_copy_check
             ;;
-        init)
+        reset)
             require_runtime_jar
-            confirm_init
+            confirm_reset
             compose down
-            run_db_command init
+            run_db_command reset
             mkdir -p -- "$SCRIPT_DIR/data/minio" "$SCRIPT_DIR/data/app/logs"
             if [[ "$DETACH" == "true" ]]; then
                 compose up -d

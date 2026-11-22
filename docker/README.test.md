@@ -90,9 +90,17 @@ sets the address used by the browser for signed downloads.
 .\grcone-app.test.bat --logs
 ```
 
-`--reset` requires explicit confirmation and permanently removes the Oracle
-named volume, MinIO object data, and application logs before starting again.
-It is not needed to resolve a port conflict.
+To replace an existing Windows Test, run from its deployment directory:
+
+```powershell
+.\grcone-app.test.bat --reset --detach
+```
+
+The runner displays the selected project and asks for confirmation. It removes
+the Oracle volume and the data under the deployment directory, then starts on
+the local Oracle container with the `GRCONE` user and schema. It remembers the
+project in `.grcone-test-reset-project` so later starts use the same database
+settings. Existing `.env` and `test.env` files require no edits.
 
 ## Endpoints and data
 
