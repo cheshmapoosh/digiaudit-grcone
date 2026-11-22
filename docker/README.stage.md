@@ -86,8 +86,13 @@ Run these commands from the deployment directory:
 
 `--check-config` validates Compose and `stage.env` only. `--check` starts a
 one-shot Java process in the stage container. It connects with the same Oracle
-settings as the app, creates a uniquely named `GRCONE_CHECK_*` table, inserts,
-reads, updates, reads, deletes, verifies the deletion, and drops the table.
+settings as the app and reads the database identity, PDB, service and server
+from the current session. It also reads the current PDB's `OPEN_MODE` when
+the account can query `V$PDBS`. If access to that view is unavailable, the
+check reports it and continues. The command then creates a uniquely named
+`GRCONE_CHECK_*` table, inserts, reads, updates, reads, deletes, verifies the
+deletion, and drops the table. The release ZIP uses its bundled JAR for
+`--check`, so this check can run before updating the running application.
 It drops the table in a `finally` block if a CRUD step fails. A failed drop is
 reported as a failure and may require manual cleanup.
 The command prints each SQL statement, its bound test values, affected row

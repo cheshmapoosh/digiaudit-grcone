@@ -48,6 +48,8 @@ public final class StageDatabaseCommand {
         try (Connection connection = DriverManager.getConnection(url, username, password)) {
             if (checking) {
                 checkLog("Connection established");
+                checkDatabaseIdentity(connection);
+                checkOpenMode(connection);
             }
             verifySchemaOwner(connection, schema, checking);
             if (checkingSchemaCopy) {
@@ -79,6 +81,50 @@ public final class StageDatabaseCommand {
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Stage Oracle operation failed: " + e.getMessage(), e);
+        }
+    }
+
+    private static void checkDatabaseIdentity(Connection connection) throws SQLException {
+        String sql = """
+                SELECT SYS_CONTEXT('USERENV', 'DB_UNIQUE_NAME'),
+                       SYS_CONTEXT('USERENV', 'CON_NAME'),
+                       SYS_CONTEXT('USERENV', 'SERVICE_NAME'),
+                       SYS_CONTEXT('USERENV', 'SERVER_HOST')
+                FROM DUAL
+                """;
+        checkSql(sql.strip());
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery(sql)) {
+            if (!result.next()) {
+                throw new SQLException("Oracle did not return information about the current session");
+            }
+            checkLog("ROW: DB_UNIQUE_NAME='" + result.getString(1)
+                    + "', CON_NAME='" + result.getString(2)
+                    + "', SERVICE_NAME='" + result.getString(3)
+                    + "', SERVER_HOST='" + result.getString(4) + "'");
+        }
+    }
+
+    private static void checkOpenMode(Connection connection) throws SQLException {
+        String sql = """
+                SELECT OPEN_MODE
+                FROM V$PDBS
+                WHERE CON_ID = TO_NUMBER(SYS_CONTEXT('USERENV', 'CON_ID'))
+                """;
+        checkSql(sql.strip());
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery(sql)) {
+            if (result.next()) {
+                checkLog("ROW: OPEN_MODE='" + result.getString(1) + "'");
+            } else {
+                checkLog("OPEN_MODE unavailable: V$PDBS returned no row for the current container");
+            }
+        } catch (SQLException e) {
+            switch (e.getErrorCode()) {
+                case 942 -> checkLog("OPEN_MODE unavailable: V$PDBS is not visible to this account (ORA-00942)");
+                case 1031 -> checkLog("OPEN_MODE unavailable: account has insufficient privileges (ORA-01031)");
+                default -> throw e;
+            }
         }
     }
 
