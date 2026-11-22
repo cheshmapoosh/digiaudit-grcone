@@ -1,14 +1,14 @@
-name: grcpc-dev
+name: grcone-dev
 
 services:
   oracle:
     image: gvenzl/oracle-free:23-slim
-    container_name: grcpc-dev-oracle
+    container_name: grcone-dev-oracle
     restart: unless-stopped
     environment:
       ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD:-oracle}
-      APP_USER: ${DB_USERNAME:-GRCPC}
-      APP_USER_PASSWORD: ${DB_PASSWORD:-grcpc}
+      APP_USER: ${DB_USERNAME:-GRCONE}
+      APP_USER_PASSWORD: ${DB_PASSWORD:-grcone}
     ports:
       - "${ORACLE_PORT:-1521}:1521"
     volumes:
@@ -22,7 +22,7 @@ services:
 
   minio:
     image: coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
-    container_name: grcpc-dev-minio
+    container_name: grcone-dev-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -36,7 +36,7 @@ services:
         source: ${DEV_MINIO_DATA_PATH:-./data/dev/minio}
         target: /data
     healthcheck:
-      test: ["CMD-SHELL", "MC_HOST_grcpcready=http://127.0.0.1:9000 mc ready grcpcready"]
+      test: ["CMD-SHELL", "MC_HOST_grconeready=http://127.0.0.1:9000 mc ready grconeready"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -45,7 +45,7 @@ services:
   app:
     image: ${JAVA_IMAGE:-eclipse-temurin:21-jre-noble}
     restart: unless-stopped
-    working_dir: /opt/grcpc
+    working_dir: /opt/grcone
     depends_on:
       oracle:
         condition: service_healthy
@@ -53,30 +53,31 @@ services:
         condition: service_healthy
     volumes:
       - type: bind
-        source: ${APP_JAR_PATH:-./grcpc-app.jar}
-        target: /opt/grcpc/grcpc-app.jar
+        source: ${APP_JAR_PATH:-./grcone-app.jar}
+        target: /opt/grcone/grcone-app.jar
         read_only: true
         bind:
           create_host_path: false
-      - ./data/dev/logs:/opt/grcpc/logs
+      - ./data/dev/logs:/opt/grcone/logs
     environment:
       SERVER_PORT: 8080
       DB_URL: ${DB_URL:-jdbc:oracle:thin:@//oracle:1521/FREEPDB1}
-      DB_USERNAME: ${DB_USERNAME:-GRCPC}
-      DB_PASSWORD: ${DB_PASSWORD:-grcpc}
-      DB_SCHEMA: ${DB_SCHEMA:-${DB_USERNAME:-GRCPC}}
-      GRCPC_MINIO_ENDPOINT: http://minio:9000
-      GRCPC_MINIO_PUBLIC_ENDPOINT: ${GRCPC_MINIO_PUBLIC_ENDPOINT:-http://${PUBLIC_HOST:-localhost}:${MINIO_API_PORT:-9000}}
-      GRCPC_MINIO_PRESIGN_REGION: ${GRCPC_MINIO_PRESIGN_REGION:-us-east-1}
-      GRCPC_MINIO_ACCESS_KEY: ${GRCPC_MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
-      GRCPC_MINIO_SECRET_KEY: ${GRCPC_MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
-      GRCPC_MINIO_BUCKET: ${GRCPC_MINIO_BUCKET:-grc-documents}
-      APP_LOGGING_PATH: /opt/grcpc/logs
+      DB_USERNAME: ${DB_USERNAME:-GRCONE}
+      DB_PASSWORD: ${DB_PASSWORD:-grcone}
+      DB_SCHEMA: ${DB_SCHEMA:-${DB_USERNAME:-GRCONE}}
+      GRCONE_MINIO_ENDPOINT: http://minio:9000
+      GRCONE_MINIO_PUBLIC_ENDPOINT: ${GRCONE_MINIO_PUBLIC_ENDPOINT:-http://${PUBLIC_HOST:-localhost}:${MINIO_API_PORT:-9000}}
+      GRCONE_MINIO_PRESIGN_REGION: ${GRCONE_MINIO_PRESIGN_REGION:-us-east-1}
+      GRCONE_MINIO_ACCESS_KEY: ${GRCONE_MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
+      GRCONE_MINIO_SECRET_KEY: ${GRCONE_MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
+      GRCONE_MINIO_BUCKET: ${GRCONE_MINIO_BUCKET:-grc-documents}
+      GRCONE_MINIO_TEMP_EXPIRATION_RULE_ID: ${GRCONE_MINIO_TEMP_EXPIRATION_RULE_ID:-grcone-temp-object-expiration}
+      APP_LOGGING_PATH: /opt/grcone/logs
       JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m}
     ports:
       - "${APP_PORT:-8080}:8080"
-    command: ["sh", "-c", "exec java $${JAVA_OPTS:-} -jar /opt/grcpc/grcpc-app.jar"]
+    command: ["sh", "-c", "exec java $${JAVA_OPTS:-} -jar /opt/grcone/grcone-app.jar"]
 
 volumes:
   oracle_data:
-    name: ${ORACLE_VOLUME:-grcpc_dev_oradata}
+    name: ${ORACLE_VOLUME:-grcone_dev_oradata}

@@ -1,0 +1,333 @@
+package com.digiaudit.grcone.modules.masterdata.globalcontrol.application;
+
+import com.digiaudit.grcone.common.exception.ConflictException;
+import com.digiaudit.grcone.common.exception.NotFoundException;
+import com.digiaudit.grcone.modules.masterdata.catalog.regulation.domain.entity.CentralRegulationEntity;
+import com.digiaudit.grcone.modules.masterdata.catalog.regulation.domain.repository.CentralRegulationRepository;
+import com.digiaudit.grcone.modules.masterdata.catalog.regulation.domain.repository.CentralRegulationGroupRepository;
+import com.digiaudit.grcone.modules.masterdata.catalog.shared.application.CatalogCommandSupport;
+import com.digiaudit.grcone.modules.masterdata.globalcontrol.api.GlobalControlRegulationDtos;
+import com.digiaudit.grcone.modules.masterdata.globalcontrol.domain.GlobalControlEntity;
+import com.digiaudit.grcone.modules.masterdata.globalcontrol.domain.GlobalControlRegulationEntity;
+import com.digiaudit.grcone.modules.masterdata.globalcontrol.domain.GlobalControlRegulationRepository;
+import com.digiaudit.grcone.modules.masterdata.globalcontrol.domain.GlobalControlRepository;
+import com.digiaudit.grcone.modules.masterdata.revision.application.MasterDataRevisionActorProvider;
+import com.digiaudit.grcone.modules.masterdata.revision.application.MasterDataRevisionCoordinator;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionExecutionContext;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionMutationGuard;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionOperationResult;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionRequest;
+import com.digiaudit.grcone.modules.masterdata.revision.domain.RevisionContentResult;
+import com.digiaudit.grcone.modules.masterdata.revision.domain.RevisionEntityType;
+import com.digiaudit.grcone.modules.masterdata.revision.domain.RevisionOperationType;
+import com.digiaudit.grcone.modules.masterdata.shared.api.dto.MasterDataRevisionMutationResponse;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataHierarchyKey;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataLifecycleStatus;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataMutationResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+
+@Service
+public class GlobalControlRegulationService {
+  private final GlobalControlRegulationRepository links;
+  private final GlobalControlRepository controls;
+  private final CentralRegulationRepository regulations;
+  private final CentralRegulationGroupRepository regulationGroups;
+  private final MasterDataRevisionCoordinator revisions;
+  private final MasterDataRevisionActorProvider actors;
+  private final RevisionMutationGuard guard;
+  private final CatalogCommandSupport support;
+  private final ObjectMapper objectMapper;
+  private final Clock clock;
+  private final com.digiaudit.grcone.modules.masterdata.security.MasterDataAuthorizationService authorization;
+
+  public GlobalControlRegulationService(GlobalControlRegulationRepository links,
+      GlobalControlRepository controls, CentralRegulationRepository regulations,
+      CentralRegulationGroupRepository regulationGroups,
+      MasterDataRevisionCoordinator revisions, MasterDataRevisionActorProvider actors,
+      RevisionMutationGuard guard, CatalogCommandSupport support, ObjectMapper objectMapper,
+      @Qualifier("masterDataRevisionClock") Clock clock,
+      com.digiaudit.grcone.modules.masterdata.security.MasterDataAuthorizationService authorization) {
+    this.links = links;
+    this.controls = controls;
+    this.regulations = regulations;
+    this.regulationGroups = regulationGroups;
+    this.revisions = revisions;
+    this.actors = actors;
+    this.guard = guard;
+    this.support = support;
+    this.objectMapper = objectMapper;
+    this.clock = clock;
+    this.authorization = authorization;
+  }
+
+  @Transactional(readOnly = true)
+  public List<GlobalControlRegulationDtos.Link> list(UUID controlId) {
+    return list(controlId, null);
+  }
+
+  @Transactional(readOnly = true)
+  public List<GlobalControlRegulationDtos.Link> list(UUID controlId, MasterDataLifecycleStatus status) {
+    requireControl(controlId);
+    return (status == MasterDataLifecycleStatus.DELETED
+        ? links.findByGlobalControlIdAndStatus(controlId, status)
+        : links.findByGlobalControlIdAndStatusNot(controlId, MasterDataLifecycleStatus.DELETED))
+        .stream().map(this::detail).toList();
+  }
+
+  @Transactional(readOnly = true)
+  public List<GlobalControlRegulationDtos.RegulationOption> options() {
+    return regulations.findByStatusNotOrderBySortOrderAscTitleAscIdAsc(
+        MasterDataLifecycleStatus.DELETED).stream()
+        .filter(e -> e.getStatus() == MasterDataLifecycleStatus.ACTIVE)
+        .map(e -> new GlobalControlRegulationDtos.RegulationOption(
+            e.getId(), e.getCode(), e.getTitle())).toList();
+  }
+
+  @Transactional(readOnly = true)
+  public GlobalControlRegulationDtos.SelectionOptions selectionOptions() {
+    var groups = regulationGroups.findByStatusNotOrderBySortOrderAscTitleAscIdAsc(
+        MasterDataLifecycleStatus.DELETED).stream()
+        .map(group -> new GlobalControlRegulationDtos.SelectionGroup(group.getId(),
+            group.getParentGroupId(), group.getCode(), group.getTitle())).toList();
+    var selectedGroupIds = groups.stream().map(GlobalControlRegulationDtos.SelectionGroup::id)
+        .collect(java.util.stream.Collectors.toSet());
+    var laws = regulations.findByStatusNotOrderBySortOrderAscTitleAscIdAsc(
+        MasterDataLifecycleStatus.DELETED).stream()
+        .filter(regulation -> regulation.getStatus() == MasterDataLifecycleStatus.ACTIVE
+            && selectedGroupIds.contains(regulation.getRegulationGroupId()))
+        .map(regulation -> new GlobalControlRegulationDtos.RegulationOptionWithGroup(
+            regulation.getId(), regulation.getRegulationGroupId(),
+            regulation.getCode(), regulation.getTitle())).toList();
+    return new GlobalControlRegulationDtos.SelectionOptions(groups, laws);
+  }
+
+  public MasterDataRevisionMutationResponse attach(UUID controlId, UUID regulationId) {
+    var result = revisions.executeStructural(
+        List.of(MasterDataHierarchyKey.GLOBAL_CONTROL, MasterDataHierarchyKey.REGULATION),
+        RevisionRequest.central("Attach regulation " + regulationId + " to global control " + controlId,
+            "Global Control regulation relation", null),
+        context -> {
+          requireGuards(context);
+          requireActiveControl(controlId);
+          requireActiveRegulation(regulationId);
+          GlobalControlRegulationEntity entity = links.findByGlobalControlIdAndRegulationId(
+              controlId, regulationId).orElse(null);
+          RevisionOperationType operation;
+          Long expected;
+          JsonNode before;
+          UUID actor = actors.currentActorId();
+          Instant now = Instant.now(clock);
+          if (entity == null) {
+            entity = new GlobalControlRegulationEntity(UUID.randomUUID(), controlId,
+                regulationId, actor, now);
+            operation = RevisionOperationType.CREATE;
+            expected = null;
+            before = null;
+          } else if (entity.getStatus() == MasterDataLifecycleStatus.DELETED) {
+            expected = entity.getVersion();
+            before = snapshot(entity);
+            entity.restore(actor, now);
+            operation = RevisionOperationType.RESTORE;
+          } else {
+            throw new ConflictException("DUPLICATE_BUSINESS_KEY",
+                "error.masterdata.v2.duplicateBusinessKey",
+                "Regulation is already related to this Global Control", regulationId);
+          }
+          entity = links.saveAndFlush(entity);
+          return completed(context, entity, operation, expected, before);
+        });
+    return MasterDataRevisionMutationResponse.from(result.primaryResult());
+  }
+
+  public MasterDataRevisionMutationResponse remove(UUID controlId, UUID regulationId, Long version) {
+    long expected = support.requireVersion(version);
+    var result = revisions.executeStructural(
+        List.of(MasterDataHierarchyKey.GLOBAL_CONTROL, MasterDataHierarchyKey.REGULATION),
+        RevisionRequest.central("Remove regulation " + regulationId + " from global control " + controlId,
+            "Global Control regulation relation", null),
+        context -> {
+          requireGuards(context);
+          requireControl(controlId);
+          GlobalControlRegulationEntity entity = links.findByGlobalControlIdAndRegulationId(
+              controlId, regulationId).orElseThrow(() -> linkNotFound(regulationId));
+          if (entity.getStatus() == MasterDataLifecycleStatus.DELETED) throw linkNotFound(regulationId);
+          if (entity.getVersion() != expected)
+            throw new ConflictException("VERSION_CONFLICT", "error.masterdata.v2.versionConflict",
+                "Regulation relation has changed", entity.getId());
+          JsonNode before = snapshot(entity);
+          entity.delete(actors.currentActorId(), Instant.now(clock));
+          entity = links.saveAndFlush(entity);
+          return completed(context, entity, RevisionOperationType.DELETE, expected, before);
+        });
+    return MasterDataRevisionMutationResponse.from(result.primaryResult());
+  }
+
+  public record PlannedChange(UUID regulationId, GlobalControlRegulationEntity row,
+      RevisionOperationType operation, Long expected, JsonNode before) {}
+  public record Plan(UUID controlId, List<PlannedChange> changes) {
+    public Plan { changes = List.copyOf(changes); }
+    public boolean isEmpty() { return changes.isEmpty(); }
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Plan prepare(GlobalControlEntity control, List<GlobalControlRegulationDtos.Change> changes) {
+    requireAggregatePermission();
+    if (changes == null || changes.isEmpty()) return new Plan(control.getId(), List.of());
+    if (changes.stream().anyMatch(java.util.Objects::isNull)) throw invalidChange();
+    var sorted = changes.stream().sorted(java.util.Comparator.comparing(c ->
+        c.regulationId() == null ? "" : c.regulationId().toString())).toList();
+    var seen = new java.util.HashSet<UUID>();
+    var endpoints = new java.util.LinkedHashMap<UUID, CentralRegulationEntity>();
+    for (var change : sorted) {
+      if (change.regulationId() == null || change.operation() == null || !seen.add(change.regulationId()))
+        throw invalidChange();
+      endpoints.put(change.regulationId(), regulations.lockById(change.regulationId())
+          .orElseThrow(() -> regulationNotFound(change.regulationId())));
+    }
+    var plan = new java.util.ArrayList<PlannedChange>();
+    for (var change : sorted) {
+      var row = links.lockPair(control.getId(), change.regulationId()).orElse(null);
+      if (change.operation() == GlobalControlRegulationDtos.Operation.CREATE_OR_RESTORE) {
+        if (row == null && (change.relationId() != null || change.version() != null)) throw invalidChange();
+        if (row != null && row.getStatus() != MasterDataLifecycleStatus.DELETED) throw support.duplicate(change.regulationId().toString());
+        if (row != null) {
+          if (!row.getId().equals(change.relationId())) throw linkNotFound(change.regulationId());
+          if (row.getVersion() != support.requireVersion(change.version())) throw new ConflictException("VERSION_CONFLICT",
+              "error.masterdata.v2.versionConflict", "Global Control regulation has changed", row.getId());
+        }
+      } else {
+        if (row == null || !row.getId().equals(change.relationId())) throw linkNotFound(change.regulationId());
+        long expected = support.requireVersion(change.version());
+        if (row.getVersion() != expected) throw new ConflictException("VERSION_CONFLICT",
+            "error.masterdata.v2.versionConflict", "Global Control regulation has changed", row.getId());
+        if ((change.operation() == GlobalControlRegulationDtos.Operation.RESTORE)
+            != (row.getStatus() == MasterDataLifecycleStatus.DELETED)) throw invalidChange();
+      }
+      var target = switch (change.operation()) {
+        case CREATE_OR_RESTORE, RESTORE, ACTIVATE -> MasterDataLifecycleStatus.ACTIVE;
+        case INACTIVATE -> MasterDataLifecycleStatus.INACTIVE;
+        case DELETE -> MasterDataLifecycleStatus.DELETED;
+      };
+      if (target == MasterDataLifecycleStatus.ACTIVE && (control.getStatus() != MasterDataLifecycleStatus.ACTIVE
+          || endpoints.get(change.regulationId()).getStatus() != MasterDataLifecycleStatus.ACTIVE))
+        throw regulationNotFound(change.regulationId());
+      if (row != null && row.getStatus() == target) continue;
+      var operation = row == null ? RevisionOperationType.CREATE
+          : row.getStatus() == MasterDataLifecycleStatus.DELETED ? RevisionOperationType.RESTORE
+          : target == MasterDataLifecycleStatus.ACTIVE ? RevisionOperationType.ACTIVATE
+          : target == MasterDataLifecycleStatus.INACTIVE ? RevisionOperationType.INACTIVATE : RevisionOperationType.DELETE;
+      plan.add(new PlannedChange(change.regulationId(), row, operation,
+          row == null ? null : row.getVersion(), row == null ? null : snapshot(row)));
+    }
+    return new Plan(control.getId(), plan);
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  public List<RevisionContentResult> apply(Plan plan) {
+    requireAggregatePermission();
+    var contents = new java.util.ArrayList<RevisionContentResult>();
+    UUID actor = actors.currentActorId(); Instant now = Instant.now(clock);
+    for (var change : plan.changes()) {
+      var row = change.row();
+      if (row == null) row = new GlobalControlRegulationEntity(UUID.randomUUID(), plan.controlId(), change.regulationId(), actor, now);
+      else switch (change.operation()) {
+        case RESTORE -> row.restore(actor, now);
+        case ACTIVATE -> row.activate(actor, now);
+        case INACTIVATE -> row.inactivate(actor, now);
+        case DELETE -> row.delete(actor, now);
+        default -> throw invalidChange();
+      }
+      row = links.saveAndFlush(row);
+      contents.add(RevisionContentResult.completed(RevisionEntityType.GLOBAL_CONTROL_REGULATION,
+          row.getId(), change.operation(), change.expected(), change.before(), snapshot(row), row.getVersion(),
+          objectMapper.valueToTree(Map.of("validated", true))));
+    }
+    return List.copyOf(contents);
+  }
+
+  private void requireAggregatePermission() {
+    com.digiaudit.grcone.modules.datasetprofile.application.ProfileTransactionPolicy.requireProtectedMutation();
+    if (!authorization.canManage("CONTROL")) throw new org.springframework.security.access.AccessDeniedException("Global Control regulations require CONTROL manage");
+  }
+
+  private com.digiaudit.grcone.common.exception.UnprocessableEntityException invalidChange() {
+    return new com.digiaudit.grcone.common.exception.UnprocessableEntityException("INVALID_REGULATION_SELECTION",
+        "error.masterdata.globalControl.regulationSelection", "Global Control regulation changes are invalid");
+  }
+
+  private RevisionOperationResult completed(RevisionExecutionContext context,
+      GlobalControlRegulationEntity entity, RevisionOperationType operation, Long expected,
+      JsonNode before) {
+    MasterDataMutationResult primary = new MasterDataMutationResult(
+        entity.getId(), context.revisionId(), entity.getVersion());
+    RevisionContentResult content = RevisionContentResult.completed(
+        RevisionEntityType.GLOBAL_CONTROL_REGULATION, entity.getId(), operation, expected,
+        before, snapshot(entity), entity.getVersion(),
+        objectMapper.valueToTree(Map.of("validated", true)));
+    return RevisionOperationResult.completed(context, primary, List.of(content));
+  }
+
+  private JsonNode snapshot(GlobalControlRegulationEntity entity) {
+    return objectMapper.valueToTree(Map.of(
+        "id", entity.getId(),
+        "globalControlId", entity.getGlobalControlId(),
+        "regulationId", entity.getRegulationId(),
+        "status", entity.getStatus().wireValue(),
+        "version", entity.getVersion()));
+  }
+
+  private GlobalControlRegulationDtos.Link detail(GlobalControlRegulationEntity entity) {
+    CentralRegulationEntity regulation = regulations.findById(entity.getRegulationId())
+        .orElseThrow(() -> linkNotFound(entity.getRegulationId()));
+    return new GlobalControlRegulationDtos.Link(entity.getId(), entity.getGlobalControlId(),
+        entity.getRegulationId(), regulation.getCode(), regulation.getTitle(), entity.getStatus(),
+        regulation.getStatus(), entity.getVersion());
+  }
+
+  private void requireGuards(RevisionExecutionContext context) {
+    guard.requireHierarchyGuard(context, MasterDataHierarchyKey.GLOBAL_CONTROL);
+    guard.requireHierarchyGuard(context, MasterDataHierarchyKey.REGULATION);
+  }
+
+  private GlobalControlEntity requireControl(UUID id) {
+    GlobalControlEntity entity = controls.findById(id).orElseThrow(() -> controlNotFound(id));
+    if (entity.getStatus() == MasterDataLifecycleStatus.DELETED) throw controlNotFound(id);
+    return entity;
+  }
+
+  private void requireActiveControl(UUID id) {
+    if (requireControl(id).getStatus() != MasterDataLifecycleStatus.ACTIVE)
+      throw controlNotFound(id);
+  }
+
+  private void requireActiveRegulation(UUID id) {
+    CentralRegulationEntity entity = regulations.findById(id)
+        .orElseThrow(() -> regulationNotFound(id));
+    if (entity.getStatus() != MasterDataLifecycleStatus.ACTIVE) throw regulationNotFound(id);
+  }
+
+  private NotFoundException controlNotFound(UUID id) {
+    return new NotFoundException("MASTER_DATA_NOT_FOUND", "error.masterdata.v2.notFound",
+        "Global Control not found", id);
+  }
+
+  private NotFoundException regulationNotFound(UUID id) {
+    return new NotFoundException("MASTER_DATA_NOT_FOUND", "error.masterdata.v2.notFound",
+        "Regulation not found", id);
+  }
+
+  private NotFoundException linkNotFound(UUID id) {
+    return new NotFoundException("MASTER_DATA_NOT_FOUND", "error.masterdata.v2.notFound",
+        "Global Control regulation relation not found", id);
+  }
+}

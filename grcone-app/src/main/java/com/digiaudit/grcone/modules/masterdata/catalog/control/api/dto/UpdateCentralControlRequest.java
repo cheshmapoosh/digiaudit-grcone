@@ -1,0 +1,45 @@
+package com.digiaudit.grcone.modules.masterdata.catalog.control.api.dto;
+
+import com.digiaudit.grcone.modules.document.api.dto.DocumentAggregateBatchRequest;
+import com.digiaudit.grcone.modules.masterdata.catalog.control.domain.enums.*;
+import com.digiaudit.grcone.modules.masterdata.classification.controlaccountgroup.api.dto.CentralControlAccountGroupChangeRequest;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataLifecycleStatus;
+import com.digiaudit.grcone.modules.masterdata.assignment.riskcontrol.api.dto.CentralRiskControlAssignmentChangeRequest;
+import com.digiaudit.grcone.modules.masterdata.assignment.controlcontrolobjective.api.dto.CentralControlControlObjectiveAssignmentChangeRequest;
+import com.digiaudit.grcone.modules.masterdata.assignment.requirementcontrol.api.dto.CentralRequirementControlAssignmentChangeRequest;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+import java.time.LocalDate;
+import java.util.Set;
+import java.util.List;
+import java.util.UUID;
+
+public record UpdateCentralControlRequest(
+    @NotNull Long version,
+    @NotBlank String title,
+    String description,
+    UUID controlGroupId,
+    CentralControlClass controlClass,
+    CentralControlImportance importance,
+    CentralControlRisk controlRisk,
+    CentralControlAutomationType automationType,
+    CentralControlPurpose controlPurpose,
+    CentralControlNature nature,
+    Set<CentralControlRelevance> controlRelevance,
+    CentralControlTriggerType triggerType,
+    @Size(max = 1000) String eventDescription,
+    CentralControlOperationFrequency operationFrequency,
+    Boolean toBeTested,
+    CentralControlTestAutomationType testAutomationType,
+    CentralControlTestingTechnique testingTechnique,
+    CentralControlEvidenceLevel evidenceLevel,
+    @NotNull MasterDataLifecycleStatus status,
+    LocalDate validFrom,
+    LocalDate validTo,
+    @Valid DocumentAggregateBatchRequest documents,
+    @Valid List<CentralControlAccountGroupChangeRequest> accountGroupChanges,
+    @Valid List<CentralRiskControlAssignmentChangeRequest> riskAssignments,
+    @Valid List<CentralControlControlObjectiveAssignmentChangeRequest> controlObjectiveAssignments,
+    @Valid List<CentralRequirementControlAssignmentChangeRequest> requirementAssignments) {}

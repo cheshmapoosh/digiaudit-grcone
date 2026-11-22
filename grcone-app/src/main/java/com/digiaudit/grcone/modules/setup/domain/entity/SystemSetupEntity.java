@@ -1,0 +1,33 @@
+package com.digiaudit.grcone.modules.setup.domain.entity;
+
+import com.digiaudit.grcone.common.persistence.AuditableEntity;
+import jakarta.persistence.*;
+import lombok.*;
+import lombok.experimental.SuperBuilder;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = "system_setup")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@SuperBuilder(toBuilder = true)
+public class SystemSetupEntity extends AuditableEntity {
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @Column(name = "initialized", nullable = false)
+    private boolean initialized;
+
+    @Column(name = "initialized_at")
+    private LocalDateTime initializedAt;
+
+    @Column(name = "initialized_by_user_id")
+    private UUID initializedByUserId;
+
+}

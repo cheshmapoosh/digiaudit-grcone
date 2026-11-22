@@ -1,0 +1,30 @@
+package com.digiaudit.grcone.modules.masterdata.scope.risk.api;
+
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.application.CentralRiskCategoryQueryService;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.application.CentralRiskTemplateQueryService;
+import com.digiaudit.grcone.modules.masterdata.scope.risk.api.dto.CentralRiskScopeSelectionOptionsResponse;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/master-data/central/risk-scope")
+public class CentralRiskScopeOptionsController {
+  private final CentralRiskTemplateQueryService riskTemplates;
+  private final CentralRiskCategoryQueryService riskCategories;
+
+  public CentralRiskScopeOptionsController(
+      CentralRiskTemplateQueryService riskTemplates,
+      CentralRiskCategoryQueryService riskCategories) {
+    this.riskTemplates = riskTemplates;
+    this.riskCategories = riskCategories;
+  }
+
+  @GetMapping("/options")
+  @PreAuthorize("@masterDataAuthorization.canView('PROCESS') and @masterDataAuthorization.canView('RISK')")
+  public CentralRiskScopeSelectionOptionsResponse options() {
+    return new CentralRiskScopeSelectionOptionsResponse(
+        riskTemplates.list(null), riskCategories.list());
+  }
+}

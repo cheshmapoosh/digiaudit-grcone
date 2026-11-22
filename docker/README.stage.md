@@ -1,6 +1,6 @@
 # Stage environment with external Oracle
 
-Put `grcpc-app.stage.sh`, `compose.stage.yml`, `grcpc-app.jar`, and `stage.env`
+Put `grcone-app.stage.sh`, `compose.stage.yml`, `grcone-app.jar`, and `stage.env`
 in the same deployment directory, with the proxy script at
 `docker/nginx/start.sh`. Load the Java, MinIO and Nginx images before starting.
 Set `PUBLIC_HOST` to the server's IP address or domain. For HTTPS, set
@@ -13,18 +13,46 @@ when copying the full repository, or copy it beside the runner as
 Build and deploy a new application JAR containing `StageDatabaseCommand` before
 using `--check` or `--init`; the runner rejects older JARs.
 
+## Update an existing installation
+
+Keep the deployment directory, `stage.env` and `data/minio` from the current
+installation. Back up Oracle and MinIO before updating. Copy the new JAR as
+`grcone-app.jar`, the Stage runner, `compose.stage.yml` and the proxy script
+into that directory. The runner recognizes an existing Stage Compose project
+in the same directory and recreates the app and proxy. The configured Oracle
+credentials and schema are used as-is. Legacy MinIO keys are accepted when
+the corresponding `GRCONE_MINIO_*` key is absent. The default lifecycle mode
+is `VALIDATE`, which reads the current policy without rewriting it.
+
+```bash
+bash ./grcone-app.stage.sh --check-config
+bash ./grcone-app.stage.sh --detach
+bash ./grcone-app.stage.sh --logs
+```
+
+To change the Oracle schema name as part of a separate database operation,
+have the Oracle administrator export the current schema and import it into a
+new user in the same PDB with Data Pump `REMAP_SCHEMA`. Stop application
+writes for the final copy. Compare tables and row contents, Flyway history,
+constraints and sequences before changing `DB_USERNAME`, `DB_PASSWORD` and
+`DB_SCHEMA` together. Retain the source schema until the new application and
+an existing attachment have been verified. The startup above does not
+transfer schemas.
+
+## New installation and maintenance
+
 Run these commands from the deployment directory:
 
 ```bash
-./grcpc-app.stage.sh --check-config
-./grcpc-app.stage.sh --check
-./grcpc-app.stage.sh --init --detach
-./grcpc-app.stage.sh --logs
+./grcone-app.stage.sh --check-config
+./grcone-app.stage.sh --check
+./grcone-app.stage.sh --init --detach
+./grcone-app.stage.sh --logs
 ```
 
 `--check-config` validates Compose and `stage.env` only. `--check` starts a
 one-shot Java process in the stage container. It connects with the same Oracle
-settings as the app, creates a uniquely named `GRCPC_CHECK_*` table, inserts,
+settings as the app, creates a uniquely named `GRCONE_CHECK_*` table, inserts,
 reads, updates, reads, deletes, verifies the deletion, and drops the table.
 It drops the table in a `finally` block if a CRUD step fails. A failed drop is
 reported as a failure and may require manual cleanup.
@@ -35,7 +63,7 @@ console output if you need to retain the log:
 
 ```bash
 set -o pipefail
-./grcpc-app.stage.sh --check 2>&1 | tee stage-check.log
+./grcone-app.stage.sh --check 2>&1 | tee stage-check.log
 ```
 
 `--init` requires an interactive `RESET` confirmation. It stops the stage

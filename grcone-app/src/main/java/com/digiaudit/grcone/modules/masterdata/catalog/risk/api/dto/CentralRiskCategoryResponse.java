@@ -1,0 +1,24 @@
+package com.digiaudit.grcone.modules.masterdata.catalog.risk.api.dto;
+
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataLifecycleStatus;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.UUID;
+
+public record CentralRiskCategoryResponse(
+    UUID id,
+    String code,
+    String title,
+    UUID parentCategoryId,
+    String description,
+    int sortOrder,
+    MasterDataLifecycleStatus status,
+    LocalDate validFrom,
+    LocalDate validTo,
+    long version,
+    Instant createdAt,
+    UUID createdBy,
+    Instant updatedAt,
+    UUID updatedBy,
+    Instant deletedAt,
+    UUID deletedBy) {}

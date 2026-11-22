@@ -8,9 +8,9 @@ case "$PUBLIC_HOST" in
         ;;
 esac
 
-case "$GRCPC_MINIO_BUCKET" in
+case "$GRCONE_MINIO_BUCKET" in
     ''|[!a-z0-9]*|*[!a-z0-9.-]*)
-        echo "GRCPC_MINIO_BUCKET must be a DNS-compatible bucket name" >&2
+        echo "GRCONE_MINIO_BUCKET must be a DNS-compatible bucket name" >&2
         exit 1
         ;;
 esac
@@ -49,7 +49,7 @@ server {
     client_max_body_size 100m;
     proxy_read_timeout 300s;
 
-    location ^~ /$GRCPC_MINIO_BUCKET/ {
+    location ^~ /$GRCONE_MINIO_BUCKET/ {
         if (\$request_method != GET) { return 405; }
         if (\$arg_x_amz_signature = "") { return 404; }
 

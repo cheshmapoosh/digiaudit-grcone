@@ -23,7 +23,7 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path('grcpc-app/src/main/resources/db/migration/oracle/V1162__master_data_v2_structural_and_central_definitions.sql')
+          path = Path('grcone-app/src/main/resources/db/migration/oracle/V1162__master_data_v2_structural_and_central_definitions.sql')
           source = path.read_text(encoding='utf-8')
           if 'objective_class varchar2(255 char)' in source:
               print('objective_class already present')
@@ -43,14 +43,14 @@ jobs:
 
       - name: Verify frontend
         run: |
-          cd grcpc-ui
+          cd grcone-ui
           npm ci
           npm run lint
           npm run build
 
       - name: Verify backend
         run: |
-          cd grcpc-app
+          cd grcone-app
           mvn -Dskip.ui=true -DskipTests package
 
       - name: Publish verified implementation
@@ -58,6 +58,6 @@ jobs:
           git config user.name "cheshmapoosh"
           git config user.email "cheshmapoosh@gmail.com"
           git rm .github/workflows/tmp-control-objective-day-zero.yml
-          git add grcpc-app/src/main/resources/db/migration/oracle/V1162__master_data_v2_structural_and_central_definitions.sql
+          git add grcone-app/src/main/resources/db/migration/oracle/V1162__master_data_v2_structural_and_central_definitions.sql
           git commit -m "fix(master-data): align Control Objective Day-Zero schema"
           git push origin HEAD:feature/master-data-v2-control-objective-ui

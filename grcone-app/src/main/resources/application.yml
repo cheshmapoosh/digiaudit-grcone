@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: grcone-api
+  config:
+    import: optional:file:./dev-local.properties,optional:file:../dev-local.properties
+
+  servlet:
+    multipart:
+      max-file-size: ${DOCUMENT_MULTIPART_MAX_FILE_SIZE:100MB}
+      max-request-size: ${DOCUMENT_MULTIPART_MAX_REQUEST_SIZE:100MB}
+
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@//localhost:1521/FREEPDB1}
+    username: ${DB_USERNAME:GRCONE}
+    password: ${DB_PASSWORD:grcone}
+    driver-class-name: ${DB_DRIVER_CLASS_NAME:oracle.jdbc.OracleDriver}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: ${DB_SCHEMA:GRCONE}
+        type:
+          preferred_uuid_jdbc_type: VARCHAR
+
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    default-schema: ${DB_SCHEMA:GRCONE}
+    schemas: ${DB_SCHEMA:GRCONE}
+    locations: classpath:db/migration/common,classpath:db/migration/oracle
+    baseline-on-migrate: true
+
+server:
+  port: ${SERVER_PORT:8080}
+
+app:
+  logging:
+    path: ${APP_LOGGING_PATH:logs}
+  master-data:
+    hierarchy-lock-timeout-ms: ${MASTER_DATA_HIERARCHY_LOCK_TIMEOUT_MS:5000}
+  minio:
+    enabled: ${GRCONE_MINIO_ENABLED:true}
+    endpoint: ${GRCONE_MINIO_ENDPOINT:http://localhost:9000}
+    public-endpoint: ${GRCONE_MINIO_PUBLIC_ENDPOINT:http://localhost:9000}
+    presign-region: ${GRCONE_MINIO_PRESIGN_REGION:}
+    access-key: ${GRCONE_MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${GRCONE_MINIO_SECRET_KEY:minioadmin}
+    bucket: ${GRCONE_MINIO_BUCKET:grc-documents}
+    presigned-url-expiry-minutes: ${GRCONE_MINIO_PRESIGNED_URL_EXPIRY_MINUTES:15}
+    default-max-upload-size-mb: ${GRCONE_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB:25}
+    temp-ttl-minutes: ${GRCONE_MINIO_TEMP_TTL_MINUTES:120}
+    temporary-prefix: ${GRCONE_MINIO_TEMPORARY_PREFIX:master-data/document/temp}
+    permanent-prefix: ${GRCONE_MINIO_PERMANENT_PREFIX:master-data/document/permanent}
+    lifecycle:
+      mode: ${GRCONE_MINIO_LIFECYCLE_MODE:APPLY}
+      temp-expiration:
+        enabled: ${GRCONE_MINIO_TEMP_EXPIRATION_ENABLED:true}
+        rule-id: ${GRCONE_MINIO_TEMP_EXPIRATION_RULE_ID:grcone-temp-object-expiration}
+        expire-days: ${GRCONE_MINIO_TEMP_EXPIRATION_DAYS:2}
+
+logging:
+  level:
+    root: ${ROOT_LOG_LEVEL:INFO}
+    com.digiaudit.grcone: ${APP_LOG_LEVEL:DEBUG}

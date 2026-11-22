@@ -1,0 +1,17 @@
+package com.digiaudit.grcone.modules.usermanagement.api.dto;
+
+import com.digiaudit.grcone.modules.usermanagement.domain.enums.ScopeType;
+import jakarta.validation.constraints.NotNull;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+public record AssignRoleRequest(
+        @NotNull UUID roleId,
+        @NotNull ScopeType scopeType,
+        UUID scopeOrgUnitId,
+        LocalDateTime validFrom,
+        LocalDateTime validTo,
+        UUID profileId
+) {
+}

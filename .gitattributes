@@ -1,3 +1,4 @@
 docker/app/entrypoint.sh text eol=lf
 docker/nginx/start.sh text eol=lf
-grcpc-app.stage.sh text eol=lf
+grcone-app.stage.sh text eol=lf
+grcone-app.test.sh text eol=lf

@@ -1,0 +1,78 @@
+package com.digiaudit.grcone.modules.usermanagement.domain.entity;
+
+import com.digiaudit.grcone.common.persistence.AuditableEntity;
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.experimental.SuperBuilder;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = "app_user")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@SuperBuilder(toBuilder = true)
+public class AppUserEntity extends AuditableEntity {
+
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.BINARY)
+    @Column(name = "profile_id", columnDefinition = "RAW(16)")
+    private UUID profileId;
+
+    @Column(name = "profile_admin", nullable = false)
+    private boolean profileAdmin;
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @Column(name = "username", nullable = false, length = 100, unique = true)
+    private String username;
+
+    @Column(name = "password_hash", nullable = false, length = 200)
+    private String passwordHash;
+
+    @Column(name = "password_change_required", nullable = false)
+    private boolean passwordChangeRequired;
+
+    @Column(name = "credential_version", nullable = false)
+    private long credentialVersion;
+
+    @Column(name = "first_name", nullable = false, length = 100)
+    private String firstName;
+
+    @Column(name = "last_name", nullable = false, length = 100)
+    private String lastName;
+
+    @Column(name = "national_code", length = 10)
+    private String nationalCode;
+
+    @Column(name = "mobile", length = 20)
+    private String mobile;
+
+    @Column(name = "email", length = 200)
+    private String email;
+
+    @Column(name = "enabled", nullable = false)
+    private boolean enabled;
+
+    @Column(name = "locked", nullable = false)
+    private boolean locked;
+
+    @Column(name = "root_user", nullable = false)
+    private boolean rootUser;
+
+    @Column(name = "default_org_unit_id")
+    private UUID defaultOrgUnitId;
+
+    @Column(name = "last_login_at")
+    private LocalDateTime lastLoginAt;
+
+
+}

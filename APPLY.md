@@ -5,7 +5,7 @@
 Repository:
 
 ```text
-cheshmapoosh/digiaudit-grcpc
+cheshmapoosh/digiaudit-grcone
 ```
 
 Branch reviewed:
@@ -22,26 +22,26 @@ Copy these paths into the repository:
 
 ```text
 AGENTS.md
-grcpc-app/AGENTS.md
-grcpc-app/src/main/java/com/digiaudit/grcpc/modules/masterdata/AGENTS.md
-grcpc-app/src/main/java/com/digiaudit/grcpc/modules/organization/AGENTS.md
-grcpc-app/src/main/java/com/digiaudit/grcpc/modules/masterdata/process/AGENTS.md
-grcpc-docs/master-data/hierarchy-guard-row-contract.md
-grcpc-docs/architecture/decisions/ADR-0001-database-hierarchy-guard-row.md
-grcpc-docs/architecture/decisions/ADR-0001-database-hierarchy-guard-row_FA.md
+grcone-app/AGENTS.md
+grcone-app/src/main/java/com/digiaudit/grcone/modules/masterdata/AGENTS.md
+grcone-app/src/main/java/com/digiaudit/grcone/modules/organization/AGENTS.md
+grcone-app/src/main/java/com/digiaudit/grcone/modules/masterdata/process/AGENTS.md
+grcone-docs/master-data/hierarchy-guard-row-contract.md
+grcone-docs/architecture/decisions/ADR-0001-database-hierarchy-guard-row.md
+grcone-docs/architecture/decisions/ADR-0001-database-hierarchy-guard-row_FA.md
 ```
 
 ### Alignment patch for large existing planning documents
 
 ```text
-grcpc-docs/master-data/master-data-hierarchy-guard-alignment.patch
+grcone-docs/master-data/master-data-hierarchy-guard-alignment.patch
 ```
 
 From the repository root:
 
 ```bash
-git apply --check grcpc-docs/master-data/master-data-hierarchy-guard-alignment.patch
-git apply grcpc-docs/master-data/master-data-hierarchy-guard-alignment.patch
+git apply --check grcone-docs/master-data/master-data-hierarchy-guard-alignment.patch
+git apply grcone-docs/master-data/master-data-hierarchy-guard-alignment.patch
 ```
 
 Run the check before applying because the branch may have moved since 2026-08-04.
@@ -51,9 +51,9 @@ Run the check before applying because the branch may have moved since 2026-08-04
 The retained authoritative Word files are not rewritten in this pack:
 
 ```text
-grcpc-docs/master-data/GRC_Master_Data_Reference_Conceptual_Model_FA.docx
-grcpc-docs/master-data/GRC_Master_Data_Logical_Model_Final_FA.docx
-grcpc-docs/master-data/GRC_Master_Data_Physical_Design_Reference_FA.docx
+grcone-docs/master-data/GRC_Master_Data_Reference_Conceptual_Model_FA.docx
+grcone-docs/master-data/GRC_Master_Data_Logical_Model_Final_FA.docx
+grcone-docs/master-data/GRC_Master_Data_Physical_Design_Reference_FA.docx
 ```
 
 The accepted owner correction is recorded as an ADR and binding implementation contract. The authority hierarchy states that the correction supersedes older wording only for hierarchy concurrency and the technical-table count.

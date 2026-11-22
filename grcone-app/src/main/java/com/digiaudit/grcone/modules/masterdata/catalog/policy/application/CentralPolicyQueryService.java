@@ -1,0 +1,129 @@
+package com.digiaudit.grcone.modules.masterdata.catalog.policy.application;
+
+import com.digiaudit.grcone.common.exception.NotFoundException;
+import com.digiaudit.grcone.modules.masterdata.catalog.policy.api.dto.CentralPolicyDtos;
+import com.digiaudit.grcone.modules.masterdata.catalog.policy.api.mapper.CentralPolicyMapper;
+import com.digiaudit.grcone.modules.masterdata.catalog.policy.domain.entity.*;
+import com.digiaudit.grcone.modules.masterdata.catalog.policy.domain.repository.*;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataLifecycleStatus;
+import java.util.*;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class CentralPolicyQueryService {
+  private final CentralPolicyGroupRepository groups;
+  private final CentralPolicyRepository policies;
+  private final CentralPolicyMapper mapper;
+
+  public CentralPolicyQueryService(
+      CentralPolicyGroupRepository g,
+      CentralPolicyRepository p,
+      CentralPolicyMapper m) {
+    groups = g;
+    policies = p;
+    mapper = m;
+  }
+
+  @Transactional(readOnly = true)
+  public List<CentralPolicyDtos.GroupSummary> groups() {
+    return groups
+        .findByStatusNotOrderBySortOrderAscTitleAscIdAsc(MasterDataLifecycleStatus.DELETED)
+        .stream()
+        .map(mapper::summary)
+        .toList();
+  }
+
+  @Transactional(readOnly = true)
+  public List<CentralPolicyDtos.GroupSummary> deletedGroups() {
+    return groups
+        .findByStatusOrderBySortOrderAscTitleAscIdAsc(MasterDataLifecycleStatus.DELETED)
+        .stream()
+        .map(mapper::summary)
+        .toList();
+  }
+
+  @Transactional(readOnly = true)
+  public CentralPolicyDtos.GroupDetail group(UUID id) {
+    return groups
+        .findByIdAndStatusNot(id, MasterDataLifecycleStatus.DELETED)
+        .map(mapper::detail)
+        .orElseThrow(() -> notFound("Policy Group", id));
+  }
+
+  @Transactional(readOnly = true)
+  public List<CentralPolicyDtos.PolicySummary> policies(UUID groupId) {
+    var rows =
+        groupId == null
+            ? policies.findByStatusNotOrderBySortOrderAscTitleAscIdAsc(
+                MasterDataLifecycleStatus.DELETED)
+            : policies.findByPolicyGroupIdAndStatusNotOrderBySortOrderAscTitleAscIdAsc(
+                groupId, MasterDataLifecycleStatus.DELETED);
+    return rows.stream().map(mapper::summary).toList();
+  }
+
+  @Transactional(readOnly = true)
+  public List<CentralPolicyDtos.PolicySummary> deletedPolicies() {
+    return policies
+        .findByStatusOrderBySortOrderAscTitleAscIdAsc(MasterDataLifecycleStatus.DELETED)
+        .stream()
+        .map(mapper::summary)
+        .toList();
+  }
+
+  @Transactional(readOnly = true)
+  public CentralPolicyDtos.PolicyDetail policy(UUID id) {
+    return policies
+        .findByIdAndStatusNot(id, MasterDataLifecycleStatus.DELETED)
+        .map(mapper::detail)
+        .orElseThrow(() -> notFound("Policy", id));
+  }
+
+
+  @Transactional(readOnly = true)
+  public List<CentralPolicyDtos.GroupTree> tree() {
+    var rows =
+        groups.findByStatusNotOrderBySortOrderAscTitleAscIdAsc(MasterDataLifecycleStatus.DELETED);
+    Map<UUID, Node> nodes = new HashMap<>();
+    rows.forEach(e -> nodes.put(e.getId(), new Node(e)));
+    List<Node> roots = new ArrayList<>();
+    for (var e : rows) {
+      Node n = nodes.get(e.getId()), p = nodes.get(e.getParentGroupId());
+      if (p == null) roots.add(n);
+      else p.children.add(n);
+    }
+    roots.sort(Node.ORDER);
+    return roots.stream().map(Node::response).toList();
+  }
+
+  private NotFoundException notFound(String type, UUID id) {
+    return new NotFoundException(
+        "MASTER_DATA_NOT_FOUND", "error.masterdata.v2.notFound", type + " not found", id);
+  }
+
+  private static final class Node {
+    static final Comparator<Node> ORDER =
+        Comparator.comparingInt((Node n) -> n.e.getSortOrder())
+            .thenComparing(n -> n.e.getTitle(), String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(n -> n.e.getId());
+    final CentralPolicyGroupEntity e;
+    final List<Node> children = new ArrayList<>();
+
+    Node(CentralPolicyGroupEntity e) {
+      this.e = e;
+    }
+
+    CentralPolicyDtos.GroupTree response() {
+      children.sort(ORDER);
+      return new CentralPolicyDtos.GroupTree(
+          e.getId(),
+          e.getCode(),
+          e.getTitle(),
+          e.getParentGroupId(),
+          e.getSortOrder(),
+          e.getStatus(),
+          e.getVersion(),
+          children.stream().map(Node::response).toList());
+    }
+  }
+}

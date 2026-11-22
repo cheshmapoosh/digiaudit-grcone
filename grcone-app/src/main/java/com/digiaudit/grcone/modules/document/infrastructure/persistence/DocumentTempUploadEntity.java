@@ -1,0 +1,167 @@
+package com.digiaudit.grcone.modules.document.infrastructure.persistence;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.Version;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.time.Instant;
+import java.util.Objects;
+import java.util.UUID;
+
+@Entity
+@org.hibernate.annotations.Filter(name = "datasetProfile", condition = "profile_id = :profileId")
+@jakarta.persistence.EntityListeners(com.digiaudit.grcone.common.persistence.ProfileEntityListener.class)
+@Table(name = "document_temp_upload")
+public class DocumentTempUploadEntity implements com.digiaudit.grcone.common.persistence.ProfileScoped {
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.BINARY)
+    @jakarta.persistence.Column(name = "profile_id", nullable = false, updatable = false, columnDefinition = "RAW(16)")
+    private java.util.UUID profileId;
+
+    public java.util.UUID getProfileId() { return profileId; }
+    public void setProfileId(java.util.UUID profileId) { this.profileId = profileId; }
+
+    @Id
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "id", nullable = false, columnDefinition = "RAW(16)")
+    private UUID id;
+
+    @Column(name = "original_file_name", nullable = false, length = 512)
+    private String originalFileName;
+
+    @Column(name = "mime_type", nullable = false, length = 255)
+    private String mimeType;
+
+    @Column(name = "file_size", nullable = false)
+    private long fileSize;
+
+    @Column(name = "storage_object_key", nullable = false, length = 1024)
+    private String storageObjectKey;
+
+    @Column(name = "checksum_algorithm", nullable = false, length = 32)
+    private String checksumAlgorithm;
+
+    @Column(name = "checksum_value", nullable = false, length = 128)
+    private String checksumValue;
+
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "uploaded_by", nullable = false, columnDefinition = "RAW(16)")
+    private UUID uploadedBy;
+
+    @Column(name = "uploaded_at", nullable = false)
+    private Instant uploadedAt;
+
+    @Column(name = "expires_at", nullable = false)
+    private Instant expiresAt;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
+
+    protected DocumentTempUploadEntity() {
+    }
+
+    private DocumentTempUploadEntity(
+            UUID id,
+            String originalFileName,
+            String mimeType,
+            long fileSize,
+            String storageObjectKey,
+            String checksumAlgorithm,
+            String checksumValue,
+            UUID uploadedBy,
+            Instant uploadedAt,
+            Instant expiresAt
+    ) {
+        this.id = Objects.requireNonNull(id, "id is required");
+        this.originalFileName = Objects.requireNonNull(originalFileName, "originalFileName is required");
+        this.mimeType = Objects.requireNonNull(mimeType, "mimeType is required");
+        if (fileSize < 0) {
+            throw new IllegalArgumentException("fileSize must not be negative");
+        }
+        this.fileSize = fileSize;
+        this.storageObjectKey = Objects.requireNonNull(storageObjectKey, "storageObjectKey is required");
+        this.checksumAlgorithm = Objects.requireNonNull(checksumAlgorithm, "checksumAlgorithm is required");
+        this.checksumValue = Objects.requireNonNull(checksumValue, "checksumValue is required");
+        this.uploadedBy = Objects.requireNonNull(uploadedBy, "uploadedBy is required");
+        this.uploadedAt = Objects.requireNonNull(uploadedAt, "uploadedAt is required");
+        this.expiresAt = Objects.requireNonNull(expiresAt, "expiresAt is required");
+        if (!expiresAt.isAfter(uploadedAt)) {
+            throw new IllegalArgumentException("expiresAt must be after uploadedAt");
+        }
+        this.version = 0L;
+    }
+
+    public static DocumentTempUploadEntity create(
+            UUID id,
+            String originalFileName,
+            String mimeType,
+            long fileSize,
+            String storageObjectKey,
+            String checksumAlgorithm,
+            String checksumValue,
+            UUID uploadedBy,
+            Instant uploadedAt,
+            Instant expiresAt
+    ) {
+        return new DocumentTempUploadEntity(
+                id,
+                originalFileName,
+                mimeType,
+                fileSize,
+                storageObjectKey,
+                checksumAlgorithm,
+                checksumValue,
+                uploadedBy,
+                uploadedAt,
+                expiresAt
+        );
+    }
+
+    public UUID getId() {
+        return id;
+    }
+
+    public String getOriginalFileName() {
+        return originalFileName;
+    }
+
+    public String getMimeType() {
+        return mimeType;
+    }
+
+    public long getFileSize() {
+        return fileSize;
+    }
+
+    public String getStorageObjectKey() {
+        return storageObjectKey;
+    }
+
+    public String getChecksumAlgorithm() {
+        return checksumAlgorithm;
+    }
+
+    public String getChecksumValue() {
+        return checksumValue;
+    }
+
+    public UUID getUploadedBy() {
+        return uploadedBy;
+    }
+
+    public Instant getUploadedAt() {
+        return uploadedAt;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public long getVersion() {
+        return version;
+    }
+}

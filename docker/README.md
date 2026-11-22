@@ -1,4 +1,4 @@
-# GRCPC Docker Environments
+# GRCONE Docker Environments
 
 Oracle is the only relational database target for this project. MinIO is used
 for object storage in every environment.
@@ -15,21 +15,21 @@ for object storage in every environment.
 From the repository root, with Java 21, Node.js and the UI dependencies installed:
 
 ```powershell
-Set-Location grcpc-ui
+Set-Location grcone-ui
 npm.cmd run build
-Set-Location ../grcpc-app
+Set-Location ../grcone-app
 .\mvnw.cmd -Pedition-single '-Dskip.ui=true' '-Dmaven.test.skip=true' package
 .\mvnw.cmd -Pedition-multi '-Dskip.ui=true' '-Dmaven.test.skip=true' package
 ```
 
 The executable JARs, including the UI, are
-`target/edition-single/grcpc-app-<version>-single.jar` and
-`target/edition-multi/grcpc-app-<version>-multi.jar`. Maven packages the
+`target/edition-single/grcone-app-<version>-single.jar` and
+`target/edition-multi/grcone-app-<version>-multi.jar`. Maven packages the
 single-profile marker inside the SINGLE JAR. The backend reads it from the
 packaged classpath. A build without an explicit edition uses multi-profile
 behavior. Either edition can be run in any environment.
 
-Copy the selected JAR to the deployment directory as `grcpc-app.jar`.
+Copy the selected JAR to the deployment directory as `grcone-app.jar`.
 For `dev`, `stage` and `prod` the direct Compose command can also mount a
 different file via `APP_JAR_PATH`. To upgrade from SINGLE to MULTI, stop the
 application container, replace the JAR and recreate the container using the
@@ -45,10 +45,10 @@ docker compose --env-file docker/env/dev.env.example -f compose.dev.yml up -d
 
 For development from IntelliJ, add `oracle minio` to the end of the command
 and use the local endpoints from the comments in `docker/env/dev.env.example`.
-In IntelliJ, keep the default Maven profile and select `GRCPC - SINGLE` from
+In IntelliJ, keep the default Maven profile and select `GRCONE - SINGLE` from
 the Run menu for single-profile mode. This configuration adds the same
 single-profile marker used by the SINGLE JAR to the local run's classpath.
-Use the regular `GrcpcApiApplication` configuration for multi-profile mode.
+Use the regular `GrconeApiApplication` configuration for multi-profile mode.
 Both configurations compile the Java files directly from `src/main/java`.
 
 Useful endpoints:
@@ -64,10 +64,10 @@ This topology runs Oracle, MinIO, and the built application in Docker. The test
 machine only needs Docker:
 
 ```powershell
-.\grcpc-app.test.bat
+.\grcone-app.test.bat
 ```
 
-Place the built boot jar next to the runner as `grcpc-app.jar`. Compose mounts
+Place the built boot jar next to the runner as `grcone-app.jar`. Compose mounts
 that jar into a Java 21 runtime image; it does not build the application.
 See [Portable Test Runner](README.test.md) for startup options and Windows
 port-conflict troubleshooting.
@@ -106,10 +106,10 @@ files. The selected port serves the selected scheme.
 
 Nginx publishes one port for the app and its signed MinIO downloads. MinIO's
 API and console are internal in stage and prod. Remove a legacy
-`GRCPC_MINIO_PUBLIC_ENDPOINT` or `MINIO_PUBLIC_ENDPOINT` setting when using
+`GRCONE_MINIO_PUBLIC_ENDPOINT` or `MINIO_PUBLIC_ENDPOINT` setting when using
 downloads through Nginx. An explicit endpoint is useful for deployments that
 already have a separate storage gateway. If the MinIO deployment uses a
-non-default S3 region, set `GRCPC_MINIO_PRESIGN_REGION` to match it.
+non-default S3 region, set `GRCONE_MINIO_PRESIGN_REGION` to match it.
 
 ## Flyway
 
@@ -118,7 +118,7 @@ Flyway is configured for Oracle by default:
 ```text
 spring.flyway.locations=classpath:db/migration/common,classpath:db/migration/oracle
 DB_DRIVER_CLASS_NAME=oracle.jdbc.OracleDriver
-DB_SCHEMA=GRCPC
+DB_SCHEMA=GRCONE
 ```
 
 The application sets this explicitly to
@@ -153,55 +153,55 @@ their corresponding application credentials through Secrets rather than editing
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
-| `GRCPC_MINIO_ENABLED` | `true` | Enables application document storage and startup lifecycle handling. |
-| `GRCPC_MINIO_ENDPOINT` | `http://localhost:9000` | Internal MinIO API endpoint used by the application. |
-| `GRCPC_MINIO_PUBLIC_ENDPOINT` | `http://localhost:9000` | Browser-reachable endpoint used for pre-signed download URLs. |
-| `GRCPC_MINIO_ACCESS_KEY` | `minioadmin` | Application MinIO access key; override through a Secret in production. |
-| `GRCPC_MINIO_SECRET_KEY` | `minioadmin` | Application MinIO secret key; override through a Secret in production. |
-| `GRCPC_MINIO_BUCKET` | `grc-documents` | Document object bucket, created when missing and verified before lifecycle setup. |
-| `GRCPC_MINIO_PRESIGNED_URL_EXPIRY_MINUTES` | `15` | Lifetime of generated download URLs. |
-| `GRCPC_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB` | `25` | Default document upload limit. |
-| `GRCPC_MINIO_TEMP_TTL_MINUTES` | `120` | Oracle business-validity period for a temporary upload. |
-| `GRCPC_MINIO_TEMPORARY_PREFIX` | `master-data/document/temp` | Object-key prefix for temporary uploads. |
-| `GRCPC_MINIO_PERMANENT_PREFIX` | `master-data/document/permanent` | Object-key prefix for immutable permanent versions. |
-| `GRCPC_MINIO_LIFECYCLE_MODE` | `APPLY` | Startup lifecycle mode: `DISABLED`, `VALIDATE`, or `APPLY`. |
-| `GRCPC_MINIO_TEMP_EXPIRATION_ENABLED` | `true` | Manages temporary-object physical expiration. |
-| `GRCPC_MINIO_TEMP_EXPIRATION_RULE_ID` | `grcpc-temp-object-expiration` | Fixed application-owned temporary expiration rule ID. |
-| `GRCPC_MINIO_TEMP_EXPIRATION_DAYS` | `2` | Physical expiration age for objects under the temporary prefix. |
+| `GRCONE_MINIO_ENABLED` | `true` | Enables application document storage and startup lifecycle handling. |
+| `GRCONE_MINIO_ENDPOINT` | `http://localhost:9000` | Internal MinIO API endpoint used by the application. |
+| `GRCONE_MINIO_PUBLIC_ENDPOINT` | `http://localhost:9000` | Browser-reachable endpoint used for pre-signed download URLs. |
+| `GRCONE_MINIO_ACCESS_KEY` | `minioadmin` | Application MinIO access key; override through a Secret in production. |
+| `GRCONE_MINIO_SECRET_KEY` | `minioadmin` | Application MinIO secret key; override through a Secret in production. |
+| `GRCONE_MINIO_BUCKET` | `grc-documents` | Document object bucket, created when missing and verified before lifecycle setup. |
+| `GRCONE_MINIO_PRESIGNED_URL_EXPIRY_MINUTES` | `15` | Lifetime of generated download URLs. |
+| `GRCONE_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB` | `25` | Default document upload limit. |
+| `GRCONE_MINIO_TEMP_TTL_MINUTES` | `120` | Oracle business-validity period for a temporary upload. |
+| `GRCONE_MINIO_TEMPORARY_PREFIX` | `master-data/document/temp` | Object-key prefix for temporary uploads. |
+| `GRCONE_MINIO_PERMANENT_PREFIX` | `master-data/document/permanent` | Object-key prefix for immutable permanent versions. |
+| `GRCONE_MINIO_LIFECYCLE_MODE` | `APPLY` | Startup lifecycle mode: `DISABLED`, `VALIDATE`, or `APPLY`. |
+| `GRCONE_MINIO_TEMP_EXPIRATION_ENABLED` | `true` | Manages temporary-object physical expiration. |
+| `GRCONE_MINIO_TEMP_EXPIRATION_RULE_ID` | `grcone-temp-object-expiration` | Fixed application-owned temporary expiration rule ID. |
+| `GRCONE_MINIO_TEMP_EXPIRATION_DAYS` | `2` | Physical expiration age for objects under the temporary prefix. |
 In Docker, the internal and public endpoints are often different:
 
 ```text
-GRCPC_MINIO_ENDPOINT=http://minio:9000
-GRCPC_MINIO_PUBLIC_ENDPOINT=https://files.example.com
+GRCONE_MINIO_ENDPOINT=http://minio:9000
+GRCONE_MINIO_PUBLIC_ENDPOINT=https://files.example.com
 ```
 
 Runtime entrypoints resolve application MinIO values in this order:
 
 ```text
-explicit GRCPC_MINIO_* value
--> matching GRCPC_MINIO_*_FILE value (credentials)
+explicit GRCONE_MINIO_* value
+-> matching GRCONE_MINIO_*_FILE value (credentials)
 -> compatible legacy MINIO_* value
 -> MinIO root credential (credentials only)
 -> documented application default
 ```
 
-`GRCPC_MINIO_ACCESS_KEY_FILE` and `GRCPC_MINIO_SECRET_KEY_FILE` are supported for
+`GRCONE_MINIO_ACCESS_KEY_FILE` and `GRCONE_MINIO_SECRET_KEY_FILE` are supported for
 application credentials. `MINIO_ROOT_USER_FILE`, `MINIO_ROOT_PASSWORD_FILE`, and
 `DB_PASSWORD_FILE` are also supported by the production entrypoint. Mount the
-host directory via `GRCPC_SECRETS_DIR` and use paths under
-`/run/secrets/grcpc/` for the `_FILE` values. Legacy
+host directory via `GRCONE_SECRETS_DIR` and use paths under
+`/run/secrets/grcone/` for the `_FILE` values. Legacy
 `MINIO_ACCESS_KEY_FILE` and `MINIO_SECRET_KEY_FILE` remain compatibility fallbacks.
 Supplying both a direct variable and its matching `_FILE` variable is rejected. Secret
 file contents and credentials are never written to startup logs. Application credentials
 may differ from the MinIO server root credentials; production should provision a scoped
-application identity and set the `GRCPC_MINIO_*` credentials explicitly.
+application identity and set the `GRCONE_MINIO_*` credentials explicitly.
 
-`GRCPC_MINIO_LIFECYCLE_MODE` defaults to `APPLY` for the current single-instance
+`GRCONE_MINIO_LIFECYCLE_MODE` defaults to `APPLY` for the current single-instance
 deployment. A future multi-instance deployment should normally use one controlled
 `APPLY` instance (or an infrastructure workflow) and run ordinary replicas in
 `VALIDATE` mode.
 
-Only the `grcpc-temp-object-expiration` temporary-object rule is supported. The former
+Only the `grcone-temp-object-expiration` temporary-object rule is supported. The former
 `AbortIncompleteMultipartUpload` rule was removed because the deployed MinIO server
 rejects its standalone lifecycle XML; startup reconciliation still removes that obsolete
 application-owned rule ID. No application cleanup scheduler replaces it.

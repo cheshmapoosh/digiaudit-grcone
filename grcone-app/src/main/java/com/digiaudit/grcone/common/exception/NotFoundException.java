@@ -1,0 +1,11 @@
+package com.digiaudit.grcone.common.exception;
+
+public class NotFoundException extends BusinessException {
+    public NotFoundException(String message) {
+        super(message);
+    }
+
+    public NotFoundException(String errorCode, String messageCode, String developerMessage, Object... messageArgs) {
+        super(errorCode, messageCode, developerMessage, messageArgs);
+    }
+}

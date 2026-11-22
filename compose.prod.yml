@@ -1,4 +1,4 @@
-name: grcpc-prod
+name: grcone-prod
 
 services:
   minio:
@@ -12,7 +12,7 @@ services:
       MINIO_ROOT_PASSWORD_FILE: ${MINIO_ROOT_PASSWORD_FILE:-}
     volumes:
       - minio_data:${MINIO_DATA_DIR:-/var/lib/minio/data}
-      - "${GRCPC_SECRETS_DIR:-./secrets}:/run/secrets/grcpc:ro"
+      - "${GRCONE_SECRETS_DIR:-./secrets}:/run/secrets/grcone:ro"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9000/minio/health/ready"]
       interval: 10s
@@ -23,27 +23,27 @@ services:
   app:
     image: ${JAVA_IMAGE:-eclipse-temurin:21-jre-noble}
     restart: unless-stopped
-    working_dir: /opt/grcpc
+    working_dir: /opt/grcone
     depends_on:
       minio:
         condition: service_healthy
     volumes:
       - type: bind
-        source: ${APP_JAR_PATH:-./grcpc-app.jar}
-        target: /opt/grcpc/grcpc-app.jar
+        source: ${APP_JAR_PATH:-./grcone-app.jar}
+        target: /opt/grcone/grcone-app.jar
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ./docker/app/entrypoint.sh
-        target: /opt/grcpc/entrypoint.sh
+        target: /opt/grcone/entrypoint.sh
         read_only: true
         bind:
           create_host_path: false
-      - ./data/app/logs:/opt/grcpc/logs
-      - "${GRCPC_SECRETS_DIR:-./secrets}:/run/secrets/grcpc:ro"
+      - ./data/app/logs:/opt/grcone/logs
+      - "${GRCONE_SECRETS_DIR:-./secrets}:/run/secrets/grcone:ro"
     environment:
-      APP_JAR: /opt/grcpc/grcpc-app.jar
+      APP_JAR: /opt/grcone/grcone-app.jar
       SERVER_PORT: 8080
       SERVER_FORWARD_HEADERS_STRATEGY: framework
       DB_URL: ${DB_URL:?Set DB_URL for external Oracle}
@@ -53,14 +53,14 @@ services:
       DB_DRIVER_CLASS_NAME: ${DB_DRIVER_CLASS_NAME:-oracle.jdbc.OracleDriver}
       DB_SCHEMA: ${DB_SCHEMA:?Set DB_SCHEMA}
       FLYWAY_ENABLED: ${FLYWAY_ENABLED:-true}
-      GRCPC_MINIO_ENABLED: ${GRCPC_MINIO_ENABLED:-${MINIO_ENABLED:-true}}
-      GRCPC_MINIO_ENDPOINT: ${GRCPC_MINIO_ENDPOINT:-${MINIO_ENDPOINT:-http://minio:9000}}
-      GRCPC_MINIO_PUBLIC_ENDPOINT: ${GRCPC_MINIO_PUBLIC_ENDPOINT:-${MINIO_PUBLIC_ENDPOINT:-${PUBLIC_SCHEME:-http}://${PUBLIC_HOST:-localhost}:${APP_PORT:-8080}}}
-      GRCPC_MINIO_PRESIGN_REGION: ${GRCPC_MINIO_PRESIGN_REGION:-us-east-1}
-      GRCPC_MINIO_ACCESS_KEY: ${GRCPC_MINIO_ACCESS_KEY:-}
-      GRCPC_MINIO_ACCESS_KEY_FILE: ${GRCPC_MINIO_ACCESS_KEY_FILE:-}
-      GRCPC_MINIO_SECRET_KEY: ${GRCPC_MINIO_SECRET_KEY:-}
-      GRCPC_MINIO_SECRET_KEY_FILE: ${GRCPC_MINIO_SECRET_KEY_FILE:-}
+      GRCONE_MINIO_ENABLED: ${GRCONE_MINIO_ENABLED:-${MINIO_ENABLED:-true}}
+      GRCONE_MINIO_ENDPOINT: ${GRCONE_MINIO_ENDPOINT:-${MINIO_ENDPOINT:-http://minio:9000}}
+      GRCONE_MINIO_PUBLIC_ENDPOINT: ${GRCONE_MINIO_PUBLIC_ENDPOINT:-${MINIO_PUBLIC_ENDPOINT:-${PUBLIC_SCHEME:-http}://${PUBLIC_HOST:-localhost}:${APP_PORT:-8080}}}
+      GRCONE_MINIO_PRESIGN_REGION: ${GRCONE_MINIO_PRESIGN_REGION:-us-east-1}
+      GRCONE_MINIO_ACCESS_KEY: ${GRCONE_MINIO_ACCESS_KEY:-}
+      GRCONE_MINIO_ACCESS_KEY_FILE: ${GRCONE_MINIO_ACCESS_KEY_FILE:-}
+      GRCONE_MINIO_SECRET_KEY: ${GRCONE_MINIO_SECRET_KEY:-}
+      GRCONE_MINIO_SECRET_KEY_FILE: ${GRCONE_MINIO_SECRET_KEY_FILE:-}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
       MINIO_ACCESS_KEY_FILE: ${MINIO_ACCESS_KEY_FILE:-}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
@@ -69,19 +69,19 @@ services:
       MINIO_ROOT_USER_FILE: ${MINIO_ROOT_USER_FILE:-}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
       MINIO_ROOT_PASSWORD_FILE: ${MINIO_ROOT_PASSWORD_FILE:-}
-      GRCPC_MINIO_BUCKET: ${GRCPC_MINIO_BUCKET:-${MINIO_BUCKET:-grc-documents}}
-      GRCPC_MINIO_PRESIGNED_URL_EXPIRY_MINUTES: ${GRCPC_MINIO_PRESIGNED_URL_EXPIRY_MINUTES:-${MINIO_PRESIGNED_URL_EXPIRY_MINUTES:-15}}
-      GRCPC_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB: ${GRCPC_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB:-${MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB:-25}}
-      GRCPC_MINIO_TEMP_TTL_MINUTES: ${GRCPC_MINIO_TEMP_TTL_MINUTES:-${MINIO_TEMP_TTL_MINUTES:-120}}
-      GRCPC_MINIO_TEMPORARY_PREFIX: ${GRCPC_MINIO_TEMPORARY_PREFIX:-${MINIO_TEMPORARY_PREFIX:-master-data/document/temp}}
-      GRCPC_MINIO_PERMANENT_PREFIX: ${GRCPC_MINIO_PERMANENT_PREFIX:-${MINIO_PERMANENT_PREFIX:-master-data/document/permanent}}
-      GRCPC_MINIO_LIFECYCLE_MODE: ${GRCPC_MINIO_LIFECYCLE_MODE:-${MINIO_LIFECYCLE_MODE:-APPLY}}
-      GRCPC_MINIO_TEMP_EXPIRATION_ENABLED: ${GRCPC_MINIO_TEMP_EXPIRATION_ENABLED:-${MINIO_TEMP_EXPIRATION_ENABLED:-true}}
-      GRCPC_MINIO_TEMP_EXPIRATION_RULE_ID: ${GRCPC_MINIO_TEMP_EXPIRATION_RULE_ID:-${MINIO_TEMP_EXPIRATION_RULE_ID:-grcpc-temp-object-expiration}}
-      GRCPC_MINIO_TEMP_EXPIRATION_DAYS: ${GRCPC_MINIO_TEMP_EXPIRATION_DAYS:-${MINIO_TEMP_EXPIRATION_DAYS:-2}}
-      APP_LOGGING_PATH: ${APP_LOGGING_PATH:-/opt/grcpc/logs}
+      GRCONE_MINIO_BUCKET: ${GRCONE_MINIO_BUCKET:-${MINIO_BUCKET:-grc-documents}}
+      GRCONE_MINIO_PRESIGNED_URL_EXPIRY_MINUTES: ${GRCONE_MINIO_PRESIGNED_URL_EXPIRY_MINUTES:-${MINIO_PRESIGNED_URL_EXPIRY_MINUTES:-15}}
+      GRCONE_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB: ${GRCONE_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB:-${MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB:-25}}
+      GRCONE_MINIO_TEMP_TTL_MINUTES: ${GRCONE_MINIO_TEMP_TTL_MINUTES:-${MINIO_TEMP_TTL_MINUTES:-120}}
+      GRCONE_MINIO_TEMPORARY_PREFIX: ${GRCONE_MINIO_TEMPORARY_PREFIX:-${MINIO_TEMPORARY_PREFIX:-master-data/document/temp}}
+      GRCONE_MINIO_PERMANENT_PREFIX: ${GRCONE_MINIO_PERMANENT_PREFIX:-${MINIO_PERMANENT_PREFIX:-master-data/document/permanent}}
+      GRCONE_MINIO_LIFECYCLE_MODE: ${GRCONE_MINIO_LIFECYCLE_MODE:-${MINIO_LIFECYCLE_MODE:-APPLY}}
+      GRCONE_MINIO_TEMP_EXPIRATION_ENABLED: ${GRCONE_MINIO_TEMP_EXPIRATION_ENABLED:-${MINIO_TEMP_EXPIRATION_ENABLED:-true}}
+      GRCONE_MINIO_TEMP_EXPIRATION_RULE_ID: ${GRCONE_MINIO_TEMP_EXPIRATION_RULE_ID:-${MINIO_TEMP_EXPIRATION_RULE_ID:-grcone-temp-object-expiration}}
+      GRCONE_MINIO_TEMP_EXPIRATION_DAYS: ${GRCONE_MINIO_TEMP_EXPIRATION_DAYS:-${MINIO_TEMP_EXPIRATION_DAYS:-2}}
+      APP_LOGGING_PATH: ${APP_LOGGING_PATH:-/opt/grcone/logs}
       JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx1024m}
-    entrypoint: ["sh", "/opt/grcpc/entrypoint.sh"]
+    entrypoint: ["sh", "/opt/grcone/entrypoint.sh"]
 
   nginx:
     image: ${NGINX_IMAGE:-nginx:1.28-alpine}
@@ -91,13 +91,13 @@ services:
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
       PUBLIC_SCHEME: ${PUBLIC_SCHEME:-http}
-      GRCPC_MINIO_BUCKET: ${GRCPC_MINIO_BUCKET:-${MINIO_BUCKET:-grc-documents}}
+      GRCONE_MINIO_BUCKET: ${GRCONE_MINIO_BUCKET:-${MINIO_BUCKET:-grc-documents}}
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
       - type: bind
         source: ./docker/nginx/start.sh
-        target: /opt/grcpc/start-nginx.sh
+        target: /opt/grcone/start-nginx.sh
         read_only: true
         bind:
           create_host_path: false
@@ -105,8 +105,8 @@ services:
         source: ${NGINX_TLS_DIR:-./tls}
         target: /etc/nginx/tls
         read_only: true
-    entrypoint: ["sh", "/opt/grcpc/start-nginx.sh"]
+    entrypoint: ["sh", "/opt/grcone/start-nginx.sh"]
 
 volumes:
   minio_data:
-    name: ${MINIO_VOLUME:-grcpc_prod_minio}
+    name: ${MINIO_VOLUME:-grcone_prod_minio}

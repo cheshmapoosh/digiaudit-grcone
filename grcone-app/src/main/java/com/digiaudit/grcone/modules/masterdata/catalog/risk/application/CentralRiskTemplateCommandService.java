@@ -1,0 +1,441 @@
+package com.digiaudit.grcone.modules.masterdata.catalog.risk.application;
+
+import com.digiaudit.grcone.common.exception.NotFoundException;
+import com.digiaudit.grcone.common.exception.UnprocessableEntityException;
+import com.digiaudit.grcone.modules.document.api.dto.DocumentAggregateBatchRequest;
+import com.digiaudit.grcone.modules.document.api.dto.DocumentCommandResponse;
+import com.digiaudit.grcone.modules.document.application.DocumentCommandService;
+import com.digiaudit.grcone.modules.document.domain.DocumentLinkTargetType;
+import com.digiaudit.grcone.modules.masterdata.assignment.riskcontrol.api.dto.CentralRiskControlAssignmentResponse;
+import com.digiaudit.grcone.modules.masterdata.assignment.riskcontrol.application.CentralRiskControlAssignmentQueryService;
+import com.digiaudit.grcone.modules.masterdata.assignment.riskcontrolobjective.api.dto.CentralRiskControlObjectiveAssignmentResponse;
+import com.digiaudit.grcone.modules.masterdata.assignment.riskcontrolobjective.application.CentralRiskControlObjectiveAssignmentQueryService;
+import com.digiaudit.grcone.modules.masterdata.catalog.control.application.CentralControlCommandService;
+import com.digiaudit.grcone.modules.masterdata.catalog.controlobjective.application.CentralControlObjectiveCommandService;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.api.dto.CreateCentralRiskTemplateRequest;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.api.dto.MoveCentralRiskTemplateRequest;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.api.dto.UpdateCentralRiskTemplateRequest;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.domain.entity.CentralRiskCategoryEntity;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.domain.entity.CentralRiskTemplateEntity;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.domain.repository.CentralRiskCategoryRepository;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.domain.repository.CentralRiskTemplateRepository;
+import com.digiaudit.grcone.modules.masterdata.catalog.shared.application.CatalogCommandSupport;
+import com.digiaudit.grcone.modules.masterdata.catalog.shared.application.CatalogHierarchySupport;
+import com.digiaudit.grcone.modules.masterdata.revision.application.MasterDataRevisionActorProvider;
+import com.digiaudit.grcone.modules.masterdata.revision.application.MasterDataRevisionCoordinator;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionExecutionContext;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionExecutionResult;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionMutationGuard;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionOperationResult;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionRequest;
+import com.digiaudit.grcone.modules.masterdata.revision.domain.RevisionEntityType;
+import com.digiaudit.grcone.modules.masterdata.revision.domain.RevisionOperationType;
+import com.digiaudit.grcone.modules.masterdata.security.MasterDataAuthorizationService;
+import com.digiaudit.grcone.modules.masterdata.shared.api.dto.MasterDataAggregateMutationResponse;
+import com.digiaudit.grcone.modules.masterdata.shared.api.dto.MasterDataRevisionMutationResponse;
+import com.digiaudit.grcone.modules.masterdata.shared.application.MasterDataStructuralDependencyChecker;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataHierarchyKey;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataLifecycleStatus;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.api.mapper.CentralRiskMapper;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.api.dto.CentralRiskTemplateAggregateResponse;
+import com.digiaudit.grcone.modules.masterdata.catalog.risk.api.dto.CentralRiskTemplateResponse;
+import com.fasterxml.jackson.databind.JsonNode;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+
+@Service
+public class CentralRiskTemplateCommandService {
+  private final CentralRiskTemplateRepository repository;
+  private final CentralRiskCategoryRepository categoryRepository;
+  private final MasterDataRevisionCoordinator revisions;
+  private final MasterDataRevisionActorProvider actors;
+  private final RevisionMutationGuard mutationGuard;
+  private final DocumentCommandService documents;
+  private final CatalogCommandSupport support;
+  private final CatalogHierarchySupport hierarchySupport;
+  private final MasterDataStructuralDependencyChecker dependencyChecker;
+  private final Clock clock;
+  private final CentralRiskMapper mapper;
+  private final MasterDataAuthorizationService authorization;
+  private final CentralControlCommandService controls;
+  private final CentralControlObjectiveCommandService controlObjectives;
+  private final CentralRiskControlAssignmentQueryService controlAssignments;
+  private final CentralRiskControlObjectiveAssignmentQueryService controlObjectiveAssignments;
+
+  public CentralRiskTemplateCommandService(
+      CentralRiskTemplateRepository repository,
+      CentralRiskCategoryRepository categoryRepository,
+      MasterDataRevisionCoordinator revisions,
+      MasterDataRevisionActorProvider actors,
+      RevisionMutationGuard mutationGuard,
+      DocumentCommandService documents,
+      CatalogCommandSupport support,
+      CatalogHierarchySupport hierarchySupport,
+      MasterDataStructuralDependencyChecker dependencyChecker,
+      @Qualifier("masterDataRevisionClock") Clock clock, CentralRiskMapper mapper,
+      MasterDataAuthorizationService authorization,
+      CentralControlCommandService controls,
+      CentralControlObjectiveCommandService controlObjectives,
+      CentralRiskControlAssignmentQueryService controlAssignments,
+      CentralRiskControlObjectiveAssignmentQueryService controlObjectiveAssignments) {
+    this.repository = repository;
+    this.categoryRepository = categoryRepository;
+    this.revisions = revisions;
+    this.actors = actors;
+    this.mutationGuard = mutationGuard;
+    this.documents = documents;
+    this.support = support;
+    this.hierarchySupport = hierarchySupport;
+    this.dependencyChecker = dependencyChecker;
+    this.clock = clock;
+    this.mapper = mapper;
+    this.authorization = authorization;
+    this.controls = controls;
+    this.controlObjectives = controlObjectives;
+    this.controlAssignments = controlAssignments;
+    this.controlObjectiveAssignments = controlObjectiveAssignments;
+  }
+
+  public CentralRiskTemplateAggregateResponse create(CreateCentralRiskTemplateRequest request) {
+    String code = support.normalizeCode(request.code());
+    String title = support.normalizeTitle(request.title());
+    String description = support.normalizeDescription(request.description());
+    int sortOrder = support.normalizeSortOrder(request.sortOrder());
+    support.validateValidity(request.validFrom(), request.validTo());
+    AtomicReference<CentralRiskTemplateResponse> canonical = new AtomicReference<>();
+    AtomicReference<List<DocumentCommandResponse>> finalized = new AtomicReference<>(List.of());
+    try {
+      RevisionExecutionResult result =
+          revisions.executeStructural(
+              MasterDataHierarchyKey.RISK,
+              RevisionRequest.central(
+                  "Create risk template " + code, "Risk Template structural create", null),
+              context -> {
+                requireGuard(context);
+                var prepared = documents.prepareAggregate(request.documents());
+                Map<UUID, CentralRiskCategoryEntity> categories = categories();
+                requireCategory(request.riskCategoryId(), categories);
+                CentralRiskTemplateEntity entity = repository.findByCode(code).orElse(null);
+                RevisionOperationType operationType;
+                Long expectedVersion;
+                JsonNode before;
+                UUID actor = actors.currentActorId();
+                Instant now = Instant.now(clock);
+                if (entity == null) {
+                  entity =
+                      CentralRiskTemplateEntity.create(
+                          UUID.randomUUID(),
+                          code,
+                          title,
+                          request.riskCategoryId(),
+                          request.riskType(),
+                          description,
+                          sortOrder,
+                          request.validFrom(),
+                          request.validTo(),
+                          actor,
+                          now);
+                  operationType = RevisionOperationType.CREATE;
+                  expectedVersion = null;
+                  before = null;
+                } else {
+                  if (entity.getStatus() == MasterDataLifecycleStatus.ACTIVE)
+                    throw support.duplicate(code);
+                  if (!entity.getRiskCategoryId().equals(request.riskCategoryId()))
+                    throw parentMismatch();
+                  expectedVersion = entity.getVersion();
+                  before = snapshot(entity);
+                  if (entity.getStatus() == MasterDataLifecycleStatus.DELETED) {
+                    entity.restoreFromCreate(
+                        title,
+                        request.riskCategoryId(),
+                        request.riskType(),
+                        description,
+                        sortOrder,
+                        request.validFrom(),
+                        request.validTo(),
+                        actor,
+                        now);
+                    operationType = RevisionOperationType.RESTORE;
+                  } else {
+                    entity.reactivateFromCreate(
+                        title,
+                        request.riskCategoryId(),
+                        request.riskType(),
+                        description,
+                        sortOrder,
+                        request.validFrom(),
+                        request.validTo(),
+                        actor,
+                        now);
+                    operationType = RevisionOperationType.ACTIVATE;
+                  }
+                }
+                CentralRiskTemplateEntity saved = repository.saveAndFlush(entity);
+              canonical.set(mapper.toResponse(saved));
+                finalized.set(
+                    documents.finalizePreparedAggregate(
+                        prepared,
+                        DocumentLinkTargetType.CENTRAL_RISK_TEMPLATE,
+                        saved.getId(),
+                        "MD_RISK_MANAGE"));
+                return completed(context, saved, operationType, expectedVersion, before);
+              });
+      return new CentralRiskTemplateAggregateResponse(result.primaryResult().entityId(), result.primaryResult().revisionId(),
+          result.primaryResult().version(), finalized.get(), canonical.get(), null, null);
+    } catch (DataIntegrityViolationException exception) {
+      throw support.translateBusinessKeyViolation(exception, "UK_CENTRAL_RISK_TEMPLATE_CODE", code);
+    }
+  }
+
+  public CentralRiskTemplateAggregateResponse update(
+      UUID id, UpdateCentralRiskTemplateRequest request) {
+    long expectedVersion = support.requireVersion(request.version());
+    String title = support.normalizeTitle(request.title());
+    String description = support.normalizeDescription(request.description());
+    support.validateValidity(request.validFrom(), request.validTo());
+    AtomicReference<CentralRiskTemplateResponse> canonical = new AtomicReference<>();
+    AtomicReference<List<DocumentCommandResponse>> finalized = new AtomicReference<>(List.of());
+    AtomicReference<List<CentralRiskControlAssignmentResponse>> savedControls = new AtomicReference<>();
+    AtomicReference<List<CentralRiskControlObjectiveAssignmentResponse>> savedObjectives = new AtomicReference<>();
+    RevisionExecutionResult result =
+        revisions.executeStructural(
+            java.util.List.of(MasterDataHierarchyKey.CONTROL, MasterDataHierarchyKey.RISK),
+            RevisionRequest.central(
+                "Update risk template " + id, "Risk Template definition update", null),
+            context -> {
+              requireGuard(context);
+              boolean hasAssignments = !CollectionUtils.isEmpty(request.controlAssignments())
+                  || !CollectionUtils.isEmpty(request.controlObjectiveAssignments());
+              if (hasAssignments) authorization.requireManageWithReference("RISK", "CONTROL");
+              var prepared = documents.prepareAggregate(request.documents());
+              var controlChanges = controls.lockRiskTemplateChanges(context, request.controlAssignments());
+              CentralRiskTemplateEntity entity = lock(id);
+              support.assertVersion(entity, expectedVersion);
+              if (entity.getStatus() == MasterDataLifecycleStatus.DELETED) throw notFound(id);
+              var objectiveChanges = controlObjectives.lockRiskTemplateChanges(context, request.controlObjectiveAssignments());
+              UUID parentId = request.parentChange() == null ? entity.getRiskCategoryId() : request.parentChange().riskCategoryId();
+              int sortOrder = request.sortOrder() == null ? entity.getSortOrder() : support.normalizeSortOrder(request.sortOrder());
+              MasterDataLifecycleStatus status = request.status() == null ? entity.getStatus() : request.status();
+              if (status == MasterDataLifecycleStatus.DELETED) throw new UnprocessableEntityException(
+                  "INVALID_STATUS", "error.masterdata.v2.invalidLifecycleTransition", "Update accepts ACTIVE or INACTIVE only");
+              if (parentId == null) throw parentMismatch();
+              requireCategory(parentId, categories());
+
+              if (Objects.equals(entity.getRiskCategoryId(), parentId)
+                  && entity.getSortOrder() == sortOrder
+                  && entity.getStatus() == status
+                  && same(entity, title, description, request) && empty(request.documents()) && !hasAssignments)
+                throw noChange();
+              JsonNode before = snapshot(entity);
+              entity.update(
+                  title,
+                  description,
+                  request.riskType(),
+                  request.validFrom(),
+                  request.validTo(),
+                  actors.currentActorId(),
+                  Instant.now(clock));
+              entity.move(parentId, sortOrder, actors.currentActorId(), Instant.now(clock));
+              if (entity.getStatus() != status) {
+                support.validateLifecycle(entity, status == MasterDataLifecycleStatus.ACTIVE ? RevisionOperationType.ACTIVATE : RevisionOperationType.INACTIVATE);
+                if (status == MasterDataLifecycleStatus.ACTIVE) entity.activate(actors.currentActorId(), Instant.now(clock));
+                else entity.inactivate(actors.currentActorId(), Instant.now(clock));
+              }
+              CentralRiskTemplateEntity saved = repository.saveAndFlush(entity);
+              canonical.set(mapper.toResponse(saved));
+              var primary = completed(context, saved, RevisionOperationType.UPDATE, expectedVersion, before);
+              var contents = new ArrayList<>(primary.contentResults());
+              contents.addAll(controls.applyRiskTemplateChanges(context, id, controlChanges));
+              contents.addAll(controlObjectives.applyRiskTemplateChanges(context, id, objectiveChanges));
+              if (!controlChanges.isEmpty()) savedControls.set(controlAssignments.forRiskTemplate(id));
+              if (!objectiveChanges.isEmpty()) savedObjectives.set(controlObjectiveAssignments.forRiskTemplate(id));
+              finalized.set(
+                  documents.finalizePreparedAggregate(
+                      prepared,
+                      DocumentLinkTargetType.CENTRAL_RISK_TEMPLATE,
+                      id,
+                      "MD_RISK_MANAGE"));
+              return RevisionOperationResult.completed(context, primary.primaryResult(), contents);
+            });
+    return new CentralRiskTemplateAggregateResponse(result.primaryResult().entityId(), result.primaryResult().revisionId(),
+          result.primaryResult().version(), finalized.get(), canonical.get(), savedControls.get(), savedObjectives.get());
+  }
+
+  public MasterDataRevisionMutationResponse move(UUID id, MoveCentralRiskTemplateRequest request) {
+    long expectedVersion = support.requireVersion(request.version());
+    int sortOrder = support.normalizeSortOrder(request.sortOrder());
+    RevisionExecutionResult result =
+        revisions.executeStructural(
+            MasterDataHierarchyKey.RISK,
+            RevisionRequest.central(
+                "Move risk template " + id, "Risk Template category move", null),
+            context -> {
+              requireGuard(context);
+              Map<UUID, CentralRiskCategoryEntity> categories = categories();
+              requireCategory(request.riskCategoryId(), categories);
+              CentralRiskTemplateEntity entity = lock(id);
+              support.assertVersion(entity, expectedVersion);
+              entity.requireNotDeleted();
+              if (entity.getRiskCategoryId().equals(request.riskCategoryId())
+                  && entity.getSortOrder() == sortOrder) throw invalidHierarchyMove();
+              JsonNode before = snapshot(entity);
+              entity.move(
+                  request.riskCategoryId(), sortOrder, actors.currentActorId(), Instant.now(clock));
+              return completed(
+                  context,
+                  repository.saveAndFlush(entity),
+                  RevisionOperationType.UPDATE,
+                  expectedVersion,
+                  before);
+            });
+    return MasterDataRevisionMutationResponse.from(result.primaryResult());
+  }
+
+  public MasterDataRevisionMutationResponse activate(UUID id, Long version) {
+    return lifecycle(id, version, RevisionOperationType.ACTIVATE);
+  }
+
+  public MasterDataRevisionMutationResponse inactivate(UUID id, Long version) {
+    return lifecycle(id, version, RevisionOperationType.INACTIVATE);
+  }
+
+  public MasterDataRevisionMutationResponse delete(UUID id, Long version) {
+    return lifecycle(id, version, RevisionOperationType.DELETE);
+  }
+
+  public MasterDataRevisionMutationResponse restore(UUID id, Long version) {
+    return lifecycle(id, version, RevisionOperationType.RESTORE);
+  }
+
+  private MasterDataRevisionMutationResponse lifecycle(
+      UUID id, Long version, RevisionOperationType operationType) {
+    long expectedVersion = support.requireVersion(version);
+    RevisionExecutionResult result =
+        revisions.executeStructural(
+            java.util.List.of(MasterDataHierarchyKey.CONTROL, MasterDataHierarchyKey.RISK),
+            RevisionRequest.central(
+                operationType + " risk template " + id, "Risk Template lifecycle", null),
+            context -> {
+              requireGuard(context);
+              Map<UUID, CentralRiskCategoryEntity> categories = categories();
+              CentralRiskTemplateEntity entity = lock(id);
+              support.assertVersion(entity, expectedVersion);
+              support.validateLifecycle(entity, operationType);
+              if (operationType == RevisionOperationType.DELETE
+                  && dependencyChecker.centralRiskTemplateHasApprovedDependencies(id)) {
+                throw new com.digiaudit.grcone.common.exception.ConflictException(
+                    "DEPENDENCY_EXISTS",
+                    "error.masterdata.v2.dependencyExists",
+                    "Risk Template has approved scope or assignment dependencies",
+                    id);
+              }
+              if (operationType == RevisionOperationType.ACTIVATE
+                  || operationType == RevisionOperationType.RESTORE) {
+                requireCategory(entity.getRiskCategoryId(), categories);
+              }
+              JsonNode before = snapshot(entity);
+              UUID actor = actors.currentActorId();
+              Instant now = Instant.now(clock);
+              switch (operationType) {
+                case ACTIVATE -> entity.activate(actor, now);
+                case INACTIVATE -> entity.inactivate(actor, now);
+                case DELETE -> entity.delete(actor, now);
+                case RESTORE -> entity.restore(actor, now);
+                default -> throw new IllegalArgumentException("Unsupported lifecycle operation");
+              }
+              return completed(
+                  context, repository.saveAndFlush(entity), operationType, expectedVersion, before);
+            });
+    return MasterDataRevisionMutationResponse.from(result.primaryResult());
+  }
+
+  private Map<UUID, CentralRiskCategoryEntity> categories() {
+    return categoryRepository.findAllByOrderByIdAsc().stream()
+        .collect(Collectors.toMap(CentralRiskCategoryEntity::getId, Function.identity()));
+  }
+
+  private void requireCategory(UUID id, Map<UUID, CentralRiskCategoryEntity> categories) {
+    hierarchySupport.requireParent(UUID.randomUUID(), id, categories, "Risk Category");
+  }
+
+  private void requireGuard(RevisionExecutionContext context) {
+    mutationGuard.requireHierarchyGuard(context, MasterDataHierarchyKey.RISK);
+  }
+
+  private CentralRiskTemplateEntity lock(UUID id) {
+    return repository.lockById(id).orElseThrow(() -> notFound(id));
+  }
+
+  private NotFoundException notFound(UUID id) {
+    return new NotFoundException(
+        "MASTER_DATA_NOT_FOUND", "error.masterdata.v2.notFound", "Risk Template not found", id);
+  }
+
+  private UnprocessableEntityException parentMismatch() {
+    return new UnprocessableEntityException(
+        "INVALID_PARENT",
+        "error.masterdata.v2.invalidParent",
+        "Create cannot change the stored category");
+  }
+
+  private UnprocessableEntityException noChange() {
+    return new UnprocessableEntityException(
+        "NO_CHANGE", "error.masterdata.v2.noChange", "The command contains no change");
+  }
+
+  private UnprocessableEntityException invalidHierarchyMove() {
+    return new UnprocessableEntityException(
+        "INVALID_HIERARCHY_MOVE",
+        "error.masterdata.v2.invalidHierarchyMove",
+        "The move does not change parent or sort order");
+  }
+
+  private Map<String, ?> typed(CentralRiskTemplateEntity e) {
+    return Map.of(
+        "riskCategoryId", e.getRiskCategoryId(),
+        "riskType", e.getRiskType(),
+        "sortOrder", e.getSortOrder());
+  }
+
+  private JsonNode snapshot(CentralRiskTemplateEntity e) {
+    return support.snapshot(e, typed(e));
+  }
+
+  private RevisionOperationResult completed(
+      RevisionExecutionContext c,
+      CentralRiskTemplateEntity e,
+      RevisionOperationType o,
+      Long v,
+      JsonNode b) {
+    return support.completed(c, e, RevisionEntityType.CENTRAL_RISK_TEMPLATE, o, v, b, typed(e));
+  }
+
+  private boolean same(
+      CentralRiskTemplateEntity e, String t, String d, UpdateCentralRiskTemplateRequest r) {
+    return Objects.equals(e.getTitle(), t)
+        && Objects.equals(e.getDescription(), d)
+        && Objects.equals(e.getRiskType(), r.riskType())
+        && Objects.equals(e.getValidFrom(), r.validFrom())
+        && Objects.equals(e.getValidTo(), r.validTo());
+  }
+
+  private boolean empty(DocumentAggregateBatchRequest r) {
+    return r == null
+        || (r.newDocuments().isEmpty()
+            && r.newVersions().isEmpty()
+            && r.metadataUpdates().isEmpty());
+  }
+}

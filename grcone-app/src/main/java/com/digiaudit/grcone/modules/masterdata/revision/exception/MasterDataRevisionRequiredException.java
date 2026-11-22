@@ -1,0 +1,37 @@
+package com.digiaudit.grcone.modules.masterdata.revision.exception;
+
+import com.digiaudit.grcone.common.exception.ConflictException;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataErrorCode;
+
+import java.util.UUID;
+
+public final class MasterDataRevisionRequiredException extends ConflictException {
+    private MasterDataRevisionRequiredException(String developerMessage, Object... messageArgs) {
+        super(
+                MasterDataErrorCode.MASTERDATA_REVISION_REQUIRED.code(),
+                "error.masterdata.v2.revisionRequired",
+                developerMessage,
+                messageArgs
+        );
+    }
+
+    public static MasterDataRevisionRequiredException missing() {
+        return new MasterDataRevisionRequiredException("Master Data mutation requires an explicit revision context");
+    }
+
+    public static MasterDataRevisionRequiredException notDraft(UUID revisionId) {
+        return new MasterDataRevisionRequiredException("Revision context is not draft: " + revisionId, revisionId);
+    }
+
+    public static MasterDataRevisionRequiredException hierarchyGuardMissing() {
+        return new MasterDataRevisionRequiredException(
+                "Structural mutation requires an acquired hierarchy guard"
+        );
+    }
+
+    public static MasterDataRevisionRequiredException hierarchyGuardMismatch() {
+        return new MasterDataRevisionRequiredException(
+                "Structural mutation hierarchy guard does not match the expected hierarchy"
+        );
+    }
+}

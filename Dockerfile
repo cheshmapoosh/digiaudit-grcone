@@ -1,6 +1,6 @@
 FROM eclipse-temurin:21-jre-noble
 
-ENV APP_JAR=/mnt/app/grcpc-app.jar
+ENV APP_JAR=/mnt/app/grcone-app.jar
 ENV MINIO_DATA_DIR=/var/lib/minio/data
 
 RUN set -eux; \

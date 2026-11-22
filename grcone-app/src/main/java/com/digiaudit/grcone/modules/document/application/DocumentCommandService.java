@@ -1,0 +1,1088 @@
+package com.digiaudit.grcone.modules.document.application;
+
+import com.digiaudit.grcone.common.security.CurrentUserProvider;
+import com.digiaudit.grcone.common.exception.BusinessException;
+import com.digiaudit.grcone.common.exception.ConflictException;
+import com.digiaudit.grcone.modules.document.api.dto.DocumentCommandResponse;
+import com.digiaudit.grcone.modules.document.api.dto.DocumentAggregateBatchRequest;
+import com.digiaudit.grcone.modules.document.api.dto.DocumentMetadataDraftRequest;
+import com.digiaudit.grcone.modules.document.api.dto.DocumentLinkSummaryResponse;
+import com.digiaudit.grcone.modules.document.api.dto.NewDocumentDraftRequest;
+import com.digiaudit.grcone.modules.document.api.dto.NewDocumentVersionDraftRequest;
+import com.digiaudit.grcone.modules.document.application.DocumentCommands.AddVersion;
+import com.digiaudit.grcone.modules.document.application.DocumentCommands.CreateLinkedDocument;
+import com.digiaudit.grcone.modules.document.application.DocumentCommands.DocumentLifecycle;
+import com.digiaudit.grcone.modules.document.application.DocumentCommands.LifecycleAction;
+import com.digiaudit.grcone.modules.document.application.DocumentCommands.LinkExistingVersion;
+import com.digiaudit.grcone.modules.document.application.DocumentCommands.LinkLifecycle;
+import com.digiaudit.grcone.modules.document.application.DocumentCommands.UpdateMetadata;
+import com.digiaudit.grcone.modules.document.domain.DocumentLifecycleStatus;
+import com.digiaudit.grcone.modules.document.domain.DocumentLinkTargetType;
+import com.digiaudit.grcone.modules.document.domain.DocumentTargetContext;
+import com.digiaudit.grcone.modules.document.infrastructure.persistence.DocumentEntity;
+import com.digiaudit.grcone.modules.document.infrastructure.persistence.DocumentLinkEntity;
+import com.digiaudit.grcone.modules.document.infrastructure.persistence.DocumentTempUploadEntity;
+import com.digiaudit.grcone.modules.document.infrastructure.persistence.DocumentVersionEntity;
+import com.digiaudit.grcone.modules.document.infrastructure.persistence.InternalDocumentJpaRepository;
+import com.digiaudit.grcone.modules.document.infrastructure.persistence.InternalDocumentLinkJpaRepository;
+import com.digiaudit.grcone.modules.document.infrastructure.persistence.InternalDocumentTempUploadJpaRepository;
+import com.digiaudit.grcone.modules.document.infrastructure.persistence.InternalDocumentVersionJpaRepository;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+import java.util.UUID;
+
+@Service
+public class DocumentCommandService {
+    private static final String UPLOAD_PERMISSION = "DOCUMENT_UPLOAD";
+    private static final String DELETE_PERMISSION = "DOCUMENT_DELETE";
+
+    private final InternalDocumentJpaRepository documentRepository;
+    private final InternalDocumentVersionJpaRepository versionRepository;
+    private final InternalDocumentLinkJpaRepository linkRepository;
+    private final InternalDocumentTempUploadJpaRepository tempUploadRepository;
+    private final DocumentTargetContextResolver targetContextResolver;
+    private final DocumentAuthorizationService authorizationService;
+    private final CurrentUserProvider currentUserProvider;
+    private final DocumentStoragePort storagePort;
+    private final DocumentObjectKeyService objectKeyService;
+    private final DocumentPromotionRollbackRegistry cleanupRegistry;
+    private final DocumentValidation validation;
+    private final DocumentResponseMapper responseMapper;
+    private final com.digiaudit.grcone.modules.basicdata.application.BasicDataService basicData;
+    private final Clock clock;
+
+    public DocumentCommandService(
+            InternalDocumentJpaRepository documentRepository,
+            InternalDocumentVersionJpaRepository versionRepository,
+            InternalDocumentLinkJpaRepository linkRepository,
+            InternalDocumentTempUploadJpaRepository tempUploadRepository,
+            DocumentTargetContextResolver targetContextResolver,
+            DocumentAuthorizationService authorizationService,
+            CurrentUserProvider currentUserProvider,
+            DocumentStoragePort storagePort,
+            DocumentObjectKeyService objectKeyService,
+            DocumentPromotionRollbackRegistry cleanupRegistry,
+            DocumentValidation validation,
+            DocumentResponseMapper responseMapper,
+            com.digiaudit.grcone.modules.basicdata.application.BasicDataService basicData,
+            @Qualifier("documentClock") Clock clock
+    ) {
+        this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository is required");
+        this.versionRepository = Objects.requireNonNull(versionRepository, "versionRepository is required");
+        this.linkRepository = Objects.requireNonNull(linkRepository, "linkRepository is required");
+        this.tempUploadRepository = Objects.requireNonNull(tempUploadRepository, "tempUploadRepository is required");
+        this.targetContextResolver = Objects.requireNonNull(targetContextResolver, "targetContextResolver is required");
+        this.authorizationService = Objects.requireNonNull(authorizationService, "authorizationService is required");
+        this.currentUserProvider = Objects.requireNonNull(currentUserProvider, "currentUserProvider is required");
+        this.storagePort = Objects.requireNonNull(storagePort, "storagePort is required");
+        this.objectKeyService = Objects.requireNonNull(objectKeyService, "objectKeyService is required");
+        this.cleanupRegistry = Objects.requireNonNull(cleanupRegistry, "cleanupRegistry is required");
+        this.validation = Objects.requireNonNull(validation, "validation is required");
+        this.responseMapper = Objects.requireNonNull(responseMapper, "responseMapper is required");
+        this.basicData = basicData;
+        this.clock = Objects.requireNonNull(clock, "clock is required");
+    }
+
+    @Transactional
+    public PreparedAggregateContext prepareAggregate(DocumentAggregateBatchRequest requestedBatch) {
+        requireActiveTransaction("prepare");
+        DocumentAggregateBatchRequest batch = requestedBatch == null
+                ? DocumentAggregateBatchRequest.empty()
+                : requestedBatch;
+        AggregateDraftPlan plan = planAggregateDrafts(batch);
+        UUID actorId = actorId();
+        Instant now = Instant.now(clock);
+        Map<UUID, PreparedTemporaryUpload> tempUploads = new LinkedHashMap<>();
+        plan.tempUploadContexts().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> tempUploads.put(
+                        entry.getKey(),
+                        preflightTemporaryUpload(entry.getKey(), actorId, now, entry.getValue())
+                ));
+        PreparedAggregateContext prepared = new PreparedAggregateContext(
+                batch,
+                plan,
+                Map.copyOf(tempUploads),
+                actorId,
+                now
+        );
+        TransactionSynchronizationManager.bindResource(prepared, Boolean.TRUE);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                try {
+                    TransactionSynchronizationManager.unbindResourceIfPossible(prepared);
+                } finally {
+                    prepared.expire();
+                }
+            }
+        });
+        return prepared;
+    }
+
+    @Transactional
+    public List<DocumentCommandResponse> finalizeAggregate(
+            DocumentAggregateBatchRequest requestedBatch,
+            DocumentLinkTargetType targetType,
+            UUID targetId
+    ) {
+        PreparedAggregateContext prepared = prepareAggregate(requestedBatch);
+        return finalizePreparedAggregate(prepared, targetType, targetId);
+    }
+
+    @Transactional
+    public List<DocumentCommandResponse> finalizePreparedAggregate(
+            PreparedAggregateContext prepared,
+            DocumentLinkTargetType targetType,
+            UUID targetId
+    ) {
+        return finalizePreparedAggregate(prepared, targetType, targetId, DocumentCatalogPermissions.mutate(targetType));
+    }
+
+    @Transactional
+    public List<DocumentCommandResponse> finalizePreparedAggregate(
+            PreparedAggregateContext prepared,
+            DocumentLinkTargetType targetType,
+            UUID targetId,
+            String targetMutationPermission
+    ) {
+        requirePreparedInCurrentTransaction(prepared);
+        prepared.consume();
+        DocumentAggregateBatchRequest batch = prepared.batch;
+        if (batch.newDocuments().isEmpty()
+                && batch.newVersions().isEmpty()
+                && batch.metadataUpdates().isEmpty()) {
+            return List.of();
+        }
+
+        DocumentTargetContext targetContext = resolveAndAuthorize(targetType, targetId, UPLOAD_PERMISSION, targetMutationPermission);
+        List<PreparedExistingMutation> existingMutations = prepareExistingMutations(
+                prepared.plan,
+                targetContext
+        );
+
+        List<DocumentCommandResponse> results = new ArrayList<>();
+        for (NewDocumentDraftRequest draft : batch.newDocuments()) {
+            results.add(finalizeNewDocumentDraft(
+                    draft,
+                    prepared.tempUploads.get(draft.tempUploadId()),
+                    targetContext,
+                    prepared.actorId,
+                    prepared.preparedAt
+            ));
+        }
+        for (PreparedExistingMutation mutation : existingMutations) {
+            results.add(finalizeExistingDocumentMutation(
+                    mutation,
+                    prepared.tempUploads,
+                    targetContext,
+                    prepared.actorId,
+                    prepared.preparedAt
+            ));
+        }
+        return List.copyOf(results);
+    }
+
+    private List<PreparedExistingMutation> prepareExistingMutations(
+            AggregateDraftPlan plan,
+            DocumentTargetContext targetContext
+    ) {
+        List<PreparedExistingMutation> existingMutations = new ArrayList<>();
+        for (ExistingDocumentDraft mutation : plan.existingDrafts().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(Map.Entry::getValue)
+                .toList()) {
+            DraftContext context = mutation.primaryContext();
+            try {
+                DocumentEntity document = lockDocument(mutation.documentId());
+                requireVersion(document.getVersion(), mutation.expectedVersion());
+                document.requireNotDeleted();
+                if (mutation.metadataUpdate() != null && mutation.metadataUpdate().documentTypeId() != null) {
+                    basicData.requireType(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.DOCUMENT_TYPE,
+                            mutation.metadataUpdate().documentTypeId(), document.getDocumentTypeId());
+                }
+                LinkedDocumentContext linkedContext = requireActiveDocumentLink(document.getId(), targetContext);
+                existingMutations.add(new PreparedExistingMutation(
+                        document,
+                        linkedContext,
+                        mutation.newVersion(),
+                        mutation.metadataUpdate(),
+                        context
+                ));
+            } catch (BusinessException ex) {
+                throw withDraftContext(ex, context);
+            }
+        }
+        return List.copyOf(existingMutations);
+    }
+
+    private PreparedTemporaryUpload preflightTemporaryUpload(
+            UUID tempUploadId,
+            UUID actorId,
+            Instant now,
+            DraftContext context
+    ) {
+        try {
+            DocumentTempUploadEntity tempUpload = tempUploadRepository.lockById(tempUploadId)
+                    .orElseThrow(() -> DocumentFailures.notFound(
+                            "TEMPORARY_UPLOAD_NOT_FOUND",
+                            "Temporary upload was not found"
+                    ));
+            validateTemporaryUpload(tempUpload, actorId, now);
+            DocumentStoragePort.DocumentObjectMetadata metadata = verifyTemporaryObject(tempUpload);
+            return new PreparedTemporaryUpload(tempUpload, metadata, context);
+        } catch (BusinessException ex) {
+            throw withDraftContext(ex, context);
+        }
+    }
+
+    private AggregateDraftPlan planAggregateDrafts(DocumentAggregateBatchRequest batch) {
+        Map<UUID, DraftContext> tempUploadContexts = new LinkedHashMap<>();
+        Map<UUID, ExistingDocumentDraft> existingDrafts = new TreeMap<>();
+
+        for (NewDocumentDraftRequest draft : batch.newDocuments()) {
+            DraftContext context = new DraftContext(draft == null ? null : draft.tempUploadId(), null, "NEW_DOCUMENT");
+            if (draft == null) {
+                throw withDraftContext(DocumentFailures.invalid("INVALID_DOCUMENT_DRAFT", "New document draft is required"), context);
+            }
+            validateWithDraftContext(context, () -> {
+                basicData.requireType(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.DOCUMENT_TYPE, draft.documentTypeId(), null);
+                validation.validateDateRange(draft.validFrom(), draft.validTo());
+                validation.requiredText(draft.title(), 255, "INVALID_DOCUMENT_TITLE", "Document title");
+                validation.nullableText(draft.code(), 64, "INVALID_DOCUMENT_CODE", "Document code");
+            });
+            registerTempUpload(tempUploadContexts, draft.tempUploadId(), context);
+        }
+
+        for (NewDocumentVersionDraftRequest draft : batch.newVersions()) {
+            DraftContext context = new DraftContext(
+                    draft == null ? null : draft.tempUploadId(),
+                    draft == null ? null : draft.documentId(),
+                    "NEW_VERSION"
+            );
+            if (draft == null) {
+                throw withDraftContext(DocumentFailures.invalid("INVALID_DOCUMENT_DRAFT", "New document version draft is required"), context);
+            }
+            validateWithDraftContext(context, () -> {
+                validation.requireExpectedVersion(draft.expectedDocumentVersion());
+                validation.validateDateRange(draft.validFrom(), draft.validTo());
+            });
+            ExistingDocumentDraft existing = existingDrafts.computeIfAbsent(
+                    requiredDocumentId(draft.documentId(), context),
+                    ExistingDocumentDraft::new
+            );
+            if (existing.newVersion() != null) {
+                throw withDraftContext(DocumentFailures.invalid(
+                        "DUPLICATE_DOCUMENT_VERSION_DRAFT",
+                        "Only one new-version draft is allowed for a document in one save"
+                ), context);
+            }
+            existing.setNewVersion(draft);
+            registerTempUpload(tempUploadContexts, draft.tempUploadId(), context);
+        }
+
+        for (DocumentMetadataDraftRequest draft : batch.metadataUpdates()) {
+            DraftContext context = new DraftContext(
+                    null,
+                    draft == null ? null : draft.documentId(),
+                    "METADATA_UPDATE"
+            );
+            if (draft == null) {
+                throw withDraftContext(DocumentFailures.invalid("INVALID_DOCUMENT_DRAFT", "Document metadata draft is required"), context);
+            }
+            validateWithDraftContext(context, () -> {
+                validation.requireExpectedVersion(draft.expectedVersion());
+                validation.requiredText(draft.title(), 255, "INVALID_DOCUMENT_TITLE", "Document title");
+            });
+            ExistingDocumentDraft existing = existingDrafts.computeIfAbsent(
+                    requiredDocumentId(draft.documentId(), context),
+                    ExistingDocumentDraft::new
+            );
+            if (existing.metadataUpdate() != null) {
+                throw withDraftContext(DocumentFailures.invalid(
+                        "DUPLICATE_DOCUMENT_OPERATION",
+                        "Only one metadata update is allowed for a document in one save"
+                ), context);
+            }
+            existing.setMetadataUpdate(draft);
+        }
+
+        for (ExistingDocumentDraft existing : existingDrafts.values()) {
+            if (existing.newVersion() != null
+                    && existing.metadataUpdate() != null
+                    && !Objects.equals(
+                            existing.newVersion().expectedDocumentVersion(),
+                            existing.metadataUpdate().expectedVersion()
+                    )) {
+                throw withDraftContext(DocumentFailures.conflict(
+                        "DOCUMENT_VERSION_CONFLICT",
+                        "Document aggregate drafts do not share the same baseline version"
+                ), existing.primaryContext());
+            }
+        }
+
+        return new AggregateDraftPlan(Map.copyOf(tempUploadContexts), existingDrafts);
+    }
+
+    private void registerTempUpload(
+            Map<UUID, DraftContext> contexts,
+            UUID tempUploadId,
+            DraftContext context
+    ) {
+        if (tempUploadId == null || contexts.putIfAbsent(tempUploadId, context) != null) {
+            throw withDraftContext(DocumentFailures.invalid(
+                    "DUPLICATE_TEMP_UPLOAD",
+                    "A temporary upload may be used only once per save"
+            ), context);
+        }
+    }
+
+    private UUID requiredDocumentId(UUID documentId, DraftContext context) {
+        if (documentId == null) {
+            throw withDraftContext(DocumentFailures.invalid(
+                    "INVALID_DOCUMENT_DRAFT",
+                    "Document identifier is required"
+            ), context);
+        }
+        return documentId;
+    }
+
+    private void validateWithDraftContext(DraftContext context, Runnable validationAction) {
+        try {
+            validationAction.run();
+        } catch (BusinessException ex) {
+            throw withDraftContext(ex, context);
+        }
+    }
+
+    private DocumentCommandResponse finalizeNewDocumentDraft(
+            NewDocumentDraftRequest draft,
+            PreparedTemporaryUpload preparedUpload,
+            DocumentTargetContext targetContext,
+            UUID actorId,
+            Instant now
+    ) {
+        DraftContext context = new DraftContext(draft.tempUploadId(), null, "NEW_DOCUMENT");
+        try {
+            DocumentTempUploadEntity tempUpload = preparedUpload.entity();
+            UUID documentId = UUID.randomUUID();
+            UUID documentVersionId = UUID.randomUUID();
+            UUID documentLinkId = UUID.randomUUID();
+            PromotedUpload promotedUpload = promotePreparedUpload(preparedUpload, documentVersionId);
+
+            DocumentEntity document = DocumentEntity.create(
+                    documentId,
+                    validation.nullableText(draft.code(), 64, "INVALID_DOCUMENT_CODE", "Document code"),
+                    validation.requiredText(draft.title(), 255, "INVALID_DOCUMENT_TITLE", "Document title"),
+                    normalizeText(draft.description()),
+                    null,
+                    draft.validFrom(),
+                    draft.validTo(),
+                    actorId,
+                    now
+            );
+            document.setDocumentTypeId(basicData.requireType(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.DOCUMENT_TYPE, draft.documentTypeId(), null));
+            DocumentVersionEntity version = DocumentVersionEntity.create(
+                    documentVersionId,
+                    documentId,
+                    1L,
+                    tempUpload.getOriginalFileName(),
+                    tempUpload.getMimeType(),
+                    tempUpload.getFileSize(),
+                    promotedUpload.permanentObjectKey(),
+                    tempUpload.getChecksumAlgorithm(),
+                    tempUpload.getChecksumValue(),
+                    draft.validFrom(),
+                    draft.validTo(),
+                    actorId,
+                    now
+            );
+            DocumentLinkEntity link = DocumentLinkEntity.create(
+                    documentLinkId,
+                    documentVersionId,
+                    targetContext.targetType(),
+                    targetContext.targetId(),
+                    actorId,
+                    now
+            );
+
+            documentRepository.save(document);
+            versionRepository.save(version);
+            linkRepository.save(link);
+            documentRepository.flush();
+            tempUploadRepository.delete(tempUpload);
+            tempUploadRepository.flush();
+
+            DocumentLinkSummaryResponse summary = responseMapper.toLinkSummary(document, version, link);
+            return responseMapper.toCommandResponse(document.getId(), document, version, link, summary);
+        } catch (BusinessException ex) {
+            throw withDraftContext(ex, context);
+        }
+    }
+
+    private DocumentCommandResponse finalizeExistingDocumentMutation(
+            PreparedExistingMutation mutation,
+            Map<UUID, PreparedTemporaryUpload> tempUploads,
+            DocumentTargetContext targetContext,
+            UUID actorId,
+            Instant now
+    ) {
+        try {
+            DocumentEntity document = mutation.document();
+            DocumentVersionEntity responseVersion = mutation.linkedContext().version();
+            DocumentLinkEntity responseLink = mutation.linkedContext().link();
+
+            if (mutation.metadataUpdate() != null) {
+                if (mutation.metadataUpdate().documentTypeId() != null) document.setDocumentTypeId(basicData.requireType(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.DOCUMENT_TYPE, mutation.metadataUpdate().documentTypeId(), document.getDocumentTypeId()));
+                document.updateMetadata(
+                        document.getCode(),
+                        validation.requiredText(mutation.metadataUpdate().title(), 255, "INVALID_DOCUMENT_TITLE", "Document title"),
+                        document.getDescription(),
+                        document.getDocumentCategoryCode(),
+                        document.getValidFrom(),
+                        document.getValidTo(),
+                        actorId,
+                        now
+                );
+            }
+
+            if (mutation.newVersion() != null) {
+                NewDocumentVersionDraftRequest draft = mutation.newVersion();
+                UUID documentVersionId = UUID.randomUUID();
+                long nextVersionNumber = versionRepository.maxVersionNumberForLockedDocument(document.getId()) + 1L;
+                PreparedTemporaryUpload preparedUpload = tempUploads.get(draft.tempUploadId());
+                DocumentTempUploadEntity tempUpload = preparedUpload.entity();
+                PromotedUpload promotedUpload = promotePreparedUpload(preparedUpload, documentVersionId);
+                if (mutation.metadataUpdate() == null) {
+                    document.touch(actorId, now);
+                }
+                responseVersion = DocumentVersionEntity.create(
+                        documentVersionId,
+                        document.getId(),
+                        nextVersionNumber,
+                        tempUpload.getOriginalFileName(),
+                        tempUpload.getMimeType(),
+                        tempUpload.getFileSize(),
+                        promotedUpload.permanentObjectKey(),
+                        tempUpload.getChecksumAlgorithm(),
+                        tempUpload.getChecksumValue(),
+                        draft.validFrom(),
+                        draft.validTo(),
+                        actorId,
+                        now
+                );
+                responseLink = DocumentLinkEntity.create(
+                        UUID.randomUUID(),
+                        responseVersion.getId(),
+                        targetContext.targetType(),
+                        targetContext.targetId(),
+                        actorId,
+                        now
+                );
+                versionRepository.save(responseVersion);
+                linkRepository.save(responseLink);
+                tempUploadRepository.delete(tempUpload);
+            }
+
+            documentRepository.save(document);
+            documentRepository.flush();
+            if (mutation.newVersion() != null) {
+                tempUploadRepository.flush();
+            }
+
+            DocumentLinkSummaryResponse summary = responseMapper.toLinkSummary(document, responseVersion, responseLink);
+            return responseMapper.toCommandResponse(document.getId(), document, responseVersion, responseLink, summary);
+        } catch (BusinessException ex) {
+            throw withDraftContext(ex, mutation.context());
+        }
+    }
+
+    private PromotedUpload promotePreparedUpload(PreparedTemporaryUpload preparedUpload, UUID documentVersionId) {
+        DocumentTempUploadEntity tempUpload = preparedUpload.entity();
+        String permanentObjectKey = objectKeyService.permanentKey(tempUpload.getId(), tempUpload.getOriginalFileName());
+        try {
+            DocumentStoragePort.PermanentObjectPromotionResult promotion = storagePort.promoteTemporaryObject(
+                    tempUpload.getStorageObjectKey(),
+                    permanentObjectKey,
+                    preparedUpload.metadata()
+            );
+            cleanupRegistry.registerFinalizationCleanup(
+                    tempUpload.getStorageObjectKey(),
+                    promotion.permanentObjectKey(),
+                    tempUpload.getId(),
+                    documentVersionId,
+                    promotion.createdByThisAttempt()
+            );
+            return new PromotedUpload(tempUpload, promotion.permanentObjectKey());
+        } catch (DocumentStorageException ex) {
+            throw storageFailure(ex, tempUpload.getId());
+        }
+    }
+
+    @Transactional
+    public DocumentCommandResponse createLinkedDocument(CreateLinkedDocument command) {
+        DocumentTargetContext targetContext = resolveAndAuthorize(command.targetType(), command.targetId(), UPLOAD_PERMISSION);
+        UUID actorId = actorId();
+        Instant now = Instant.now(clock);
+        validation.validateDateRange(command.validFrom(), command.validTo());
+        String title = validation.requiredText(command.title(), 255, "INVALID_DOCUMENT_TITLE", "Document title");
+        String code = validation.nullableText(command.code(), 64, "INVALID_DOCUMENT_CODE", "Document code");
+        String category = validation.nullableText(command.documentCategoryCode(), 64, "INVALID_DOCUMENT_CATEGORY", "Document category");
+
+        UUID typeId = basicData.requireType(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.DOCUMENT_TYPE, command.documentTypeId(), null);
+        UUID documentId = UUID.randomUUID();
+        UUID documentVersionId = UUID.randomUUID();
+        UUID documentLinkId = UUID.randomUUID();
+        PromotedUpload promotedUpload = lockValidateAndPromote(command.tempUploadId(), actorId, now, documentVersionId);
+        DocumentTempUploadEntity tempUpload = promotedUpload.tempUpload();
+
+        DocumentEntity document = DocumentEntity.create(
+                documentId,
+                code,
+                title,
+                normalizeText(command.description()),
+                category,
+                command.validFrom(),
+                command.validTo(),
+                actorId,
+                now
+        );
+        document.setDocumentTypeId(typeId);
+        DocumentVersionEntity version = DocumentVersionEntity.create(
+                documentVersionId,
+                documentId,
+                1L,
+                tempUpload.getOriginalFileName(),
+                tempUpload.getMimeType(),
+                tempUpload.getFileSize(),
+                promotedUpload.permanentObjectKey(),
+                tempUpload.getChecksumAlgorithm(),
+                tempUpload.getChecksumValue(),
+                command.validFrom(),
+                command.validTo(),
+                actorId,
+                now
+        );
+        DocumentLinkEntity link = DocumentLinkEntity.create(
+                documentLinkId,
+                documentVersionId,
+                targetContext.targetType(),
+                targetContext.targetId(),
+                actorId,
+                now
+        );
+
+        documentRepository.save(document);
+        versionRepository.save(version);
+        linkRepository.save(link);
+        documentRepository.flush();
+        tempUploadRepository.delete(tempUpload);
+        tempUploadRepository.flush();
+
+        DocumentLinkSummaryResponse summary = responseMapper.toLinkSummary(document, version, link);
+        return responseMapper.toCommandResponse(document.getId(), document, version, link, summary);
+    }
+
+    @Transactional
+    public DocumentCommandResponse addVersion(AddVersion command) {
+        DocumentTargetContext targetContext = resolveAndAuthorize(command.targetType(), command.targetId(), UPLOAD_PERMISSION);
+        UUID actorId = actorId();
+        validation.requireExpectedVersion(command.expectedDocumentVersion());
+        validation.validateDateRange(command.validFrom(), command.validTo());
+        Instant now = Instant.now(clock);
+        DocumentEntity document = lockDocument(command.documentId());
+        requireVersion(document.getVersion(), command.expectedDocumentVersion());
+        document.requireNotDeleted();
+        requireActiveDocumentLink(document.getId(), targetContext);
+
+        UUID documentVersionId = UUID.randomUUID();
+        UUID documentLinkId = UUID.randomUUID();
+        long nextVersionNumber = versionRepository.maxVersionNumberForLockedDocument(document.getId()) + 1L;
+        PromotedUpload promotedUpload = lockValidateAndPromote(command.tempUploadId(), actorId, now, documentVersionId);
+        DocumentTempUploadEntity tempUpload = promotedUpload.tempUpload();
+
+        document.touch(actorId, now);
+        DocumentVersionEntity version = DocumentVersionEntity.create(
+                documentVersionId,
+                document.getId(),
+                nextVersionNumber,
+                tempUpload.getOriginalFileName(),
+                tempUpload.getMimeType(),
+                tempUpload.getFileSize(),
+                promotedUpload.permanentObjectKey(),
+                tempUpload.getChecksumAlgorithm(),
+                tempUpload.getChecksumValue(),
+                command.validFrom(),
+                command.validTo(),
+                actorId,
+                now
+        );
+        DocumentLinkEntity link = DocumentLinkEntity.create(
+                documentLinkId,
+                version.getId(),
+                targetContext.targetType(),
+                targetContext.targetId(),
+                actorId,
+                now
+        );
+
+        documentRepository.save(document);
+        versionRepository.save(version);
+        linkRepository.save(link);
+        documentRepository.flush();
+        tempUploadRepository.delete(tempUpload);
+        tempUploadRepository.flush();
+
+        DocumentLinkSummaryResponse summary = responseMapper.toLinkSummary(document, version, link);
+        return responseMapper.toCommandResponse(document.getId(), document, version, link, summary);
+    }
+
+    @Transactional
+    public DocumentCommandResponse updateMetadata(UpdateMetadata command) {
+        DocumentTargetContext targetContext = resolveAndAuthorize(command.targetType(), command.targetId(), UPLOAD_PERMISSION);
+        UUID actorId = actorId();
+        validation.requireExpectedVersion(command.expectedVersion());
+        Instant now = Instant.now(clock);
+        DocumentEntity document = lockDocument(command.documentId());
+        requireVersion(document.getVersion(), command.expectedVersion());
+        LinkedDocumentContext linkedContext = requireActiveDocumentLink(document.getId(), targetContext);
+        String nextCode = command.code().isPresent()
+                ? validation.nullableText(command.code().value(), 64, "INVALID_DOCUMENT_CODE", "Document code")
+                : document.getCode();
+        String nextTitle = command.title().isPresent()
+                ? validation.requiredText(command.title().value(), 255, "INVALID_DOCUMENT_TITLE", "Document title")
+                : document.getTitle();
+        String nextDescription = command.description().isPresent()
+                ? normalizeText(command.description().value())
+                : document.getDescription();
+        String nextCategory = command.documentCategoryCode().isPresent()
+                ? validation.nullableText(command.documentCategoryCode().value(), 64, "INVALID_DOCUMENT_CATEGORY", "Document category")
+                : document.getDocumentCategoryCode();
+        LocalDate nextValidFrom = command.validFrom().isPresent() ? command.validFrom().value() : document.getValidFrom();
+        LocalDate nextValidTo = command.validTo().isPresent() ? command.validTo().value() : document.getValidTo();
+        validation.validateDateRange(nextValidFrom, nextValidTo);
+        if (command.documentTypeId().isPresent()) document.setDocumentTypeId(basicData.requireType(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.DOCUMENT_TYPE, command.documentTypeId().value(), document.getDocumentTypeId()));
+        document.updateMetadata(
+                nextCode,
+                nextTitle,
+                nextDescription,
+                nextCategory,
+                nextValidFrom,
+                nextValidTo,
+                actorId,
+                now
+        );
+        documentRepository.saveAndFlush(document);
+
+        DocumentLinkSummaryResponse summary = responseMapper.toLinkSummary(document, linkedContext.version(), linkedContext.link());
+        return responseMapper.toCommandResponse(document.getId(), document, linkedContext.version(), linkedContext.link(), summary);
+    }
+
+    @Transactional
+    public DocumentCommandResponse documentLifecycle(DocumentLifecycle command) {
+        String permission = command.action() == LifecycleAction.DELETE ? DELETE_PERMISSION : UPLOAD_PERMISSION;
+        DocumentTargetContext targetContext = resolveAndAuthorize(command.targetType(), command.targetId(), permission);
+        UUID actorId = actorId();
+        validation.requireExpectedVersion(command.expectedVersion());
+        Instant now = Instant.now(clock);
+        DocumentEntity document = lockDocument(command.documentId());
+        requireVersion(document.getVersion(), command.expectedVersion());
+        LinkedDocumentContext linkedContext = requireActiveDocumentLink(document.getId(), targetContext);
+        applyDocumentLifecycle(document, command.action(), actorId, now);
+        documentRepository.saveAndFlush(document);
+
+        DocumentLinkSummaryResponse summary = responseMapper.toLinkSummary(document, linkedContext.version(), linkedContext.link());
+        return responseMapper.toCommandResponse(document.getId(), document, linkedContext.version(), linkedContext.link(), summary);
+    }
+
+    @Transactional
+    public DocumentCommandResponse linkExistingVersion(LinkExistingVersion command) {
+        DocumentTargetContext targetContext = resolveAndAuthorize(command.targetType(), command.targetId(), UPLOAD_PERMISSION);
+        requireReadableSourceVersion(command.documentVersionId());
+        UUID actorId = actorId();
+        Instant now = Instant.now(clock);
+        DocumentVersionEntity version = versionRepository.findById(command.documentVersionId())
+                .orElseThrow(() -> DocumentFailures.notFound("DOCUMENT_VERSION_NOT_FOUND", "Document version was not found"));
+        if (version.getStatus() == DocumentLifecycleStatus.DELETED) {
+            throw DocumentFailures.notFound("DOCUMENT_VERSION_NOT_FOUND", "Document version was not found");
+        }
+        DocumentEntity document = documentRepository.findById(version.getDocumentId())
+                .orElseThrow(() -> DocumentFailures.notFound("DOCUMENT_NOT_FOUND", "Document was not found"));
+        if (document.getStatus() == DocumentLifecycleStatus.DELETED) {
+            throw DocumentFailures.notFound("DOCUMENT_NOT_FOUND", "Document was not found");
+        }
+
+        DocumentLinkEntity link = linkRepository.lockByBusinessKey(version.getId(), targetContext.targetType(), targetContext.targetId())
+                .orElse(null);
+        if (link == null) {
+            link = DocumentLinkEntity.create(UUID.randomUUID(), version.getId(), targetContext.targetType(), targetContext.targetId(), actorId, now);
+        } else if (link.getStatus() == DocumentLifecycleStatus.ACTIVE) {
+            throw DocumentFailures.conflict("DUPLICATE_ACTIVE_DOCUMENT_LINK", "An active document link already exists for this version and target");
+        } else {
+            link.restore(actorId, now);
+        }
+        linkRepository.saveAndFlush(link);
+
+        DocumentLinkSummaryResponse summary = responseMapper.toLinkSummary(document, version, link);
+        return responseMapper.toCommandResponse(link.getId(), document, version, link, summary);
+    }
+
+    @Transactional
+    public DocumentCommandResponse linkLifecycle(LinkLifecycle command) {
+        UUID actorId = actorId();
+        validation.requireExpectedVersion(command.expectedVersion());
+        Instant now = Instant.now(clock);
+        DocumentLinkEntity link = linkRepository.lockById(command.linkId())
+                .orElseThrow(() -> DocumentFailures.notFound("DOCUMENT_LINK_NOT_FOUND", "Document link was not found"));
+        if (!link.getTargetType().isPublicSelectable()) {
+            throw DocumentFailures.invalid("TARGET_NOT_ALLOWED", "Document link target type is not allowed from browser requests");
+        }
+        String permission = command.action() == LifecycleAction.DELETE ? DELETE_PERMISSION : UPLOAD_PERMISSION;
+        resolveAndAuthorize(link.getTargetType(), link.getTargetId(), permission);
+        requireVersion(link.getVersion(), command.expectedVersion());
+        DocumentVersionEntity version = versionRepository.findById(link.getDocumentVersionId())
+                .orElseThrow(() -> DocumentFailures.notFound("DOCUMENT_VERSION_NOT_FOUND", "Document version was not found"));
+        DocumentEntity document = documentRepository.findById(version.getDocumentId())
+                .orElseThrow(() -> DocumentFailures.notFound("DOCUMENT_NOT_FOUND", "Document was not found"));
+        applyLinkLifecycle(link, command.action(), actorId, now);
+        linkRepository.saveAndFlush(link);
+
+        DocumentLinkSummaryResponse summary = responseMapper.toLinkSummary(document, version, link);
+        return responseMapper.toCommandResponse(link.getId(), document, version, link, summary);
+    }
+
+    private void requireReadableSourceVersion(UUID versionId) {
+        boolean readable = linkRepository.findActiveLinksForVersion(versionId, DocumentLifecycleStatus.ACTIVE)
+                .stream()
+                .filter(link -> link.getTargetType().isPublicSelectable())
+                .anyMatch(link -> authorizationService.canAccess(
+                        link.getTargetType().wireValue(), link.getTargetId(), "DOCUMENT_VIEW"));
+        if (!readable) {
+            throw DocumentFailures.forbidden("DOCUMENT_ACCESS_DENIED", "Source document version is not accessible");
+        }
+    }
+
+    private DocumentTargetContext resolveAndAuthorize(DocumentLinkTargetType targetType, UUID targetId, String permission) {
+        return resolveAndAuthorize(targetType, targetId, permission, DocumentCatalogPermissions.mutate(targetType));
+    }
+
+    private DocumentTargetContext resolveAndAuthorize(
+            DocumentLinkTargetType targetType,
+            UUID targetId,
+            String permission,
+            String targetMutationPermission
+    ) {
+        if (targetType.wireValue().startsWith("LOCAL_")) {
+            authorizationService.assertCanAccess(targetType.wireValue(), targetId, permission);
+            authorizationService.assertCanAccess(targetType.wireValue(), targetId, targetMutationPermission);
+        }
+        DocumentTargetContext targetContext = targetContextResolver.resolvePublic(targetType, targetId);
+        authorizationService.assertCanAccess(
+                targetContext.authorizationResourceType(),
+                targetContext.authorizationResourceId(),
+                permission
+        );
+        authorizationService.assertCanAccess(
+                targetContext.authorizationResourceType(),
+                targetContext.authorizationResourceId(),
+                targetMutationPermission
+        );
+        targetContextResolver.assertMutable(targetType, targetId);
+        return targetContext;
+    }
+
+    private UUID actorId() {
+        return currentUserProvider.getCurrentUserIdOptional()
+                .orElseThrow(() -> DocumentFailures.forbidden("DOCUMENT_ACTOR_REQUIRED", "Authenticated user is required"));
+    }
+
+    private void requireActiveTransaction(String operation) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            throw new IllegalStateException(
+                    "Document aggregate " + operation + " must run inside one active transaction"
+            );
+        }
+    }
+
+    private void requirePreparedInCurrentTransaction(PreparedAggregateContext prepared) {
+        requireActiveTransaction("finalization");
+        if (prepared == null
+                || !Boolean.TRUE.equals(TransactionSynchronizationManager.getResource(prepared))) {
+            throw new IllegalStateException(
+                    "Prepared document aggregate must be consumed in the transaction that created it"
+            );
+        }
+    }
+
+    private PromotedUpload lockValidateAndPromote(UUID tempUploadId, UUID actorId, Instant now, UUID documentVersionId) {
+        DocumentTempUploadEntity tempUpload = tempUploadRepository.lockById(tempUploadId)
+                .orElseThrow(() -> DocumentFailures.notFound(
+                        "TEMPORARY_UPLOAD_NOT_FOUND",
+                        "Temporary upload was not found. tempUploadId=" + tempUploadId
+                ));
+        validateTemporaryUpload(tempUpload, actorId, now);
+        DocumentStoragePort.DocumentObjectMetadata expectedMetadata = verifyTemporaryObject(tempUpload);
+        String permanentObjectKey = objectKeyService.permanentKey(tempUpload.getId(), tempUpload.getOriginalFileName());
+        try {
+            DocumentStoragePort.PermanentObjectPromotionResult promotion = storagePort.promoteTemporaryObject(
+                    tempUpload.getStorageObjectKey(),
+                    permanentObjectKey,
+                    expectedMetadata
+            );
+            cleanupRegistry.registerFinalizationCleanup(
+                    tempUpload.getStorageObjectKey(),
+                    promotion.permanentObjectKey(),
+                    tempUpload.getId(),
+                    documentVersionId,
+                    promotion.createdByThisAttempt()
+            );
+            return new PromotedUpload(tempUpload, promotion.permanentObjectKey());
+        } catch (DocumentStorageException ex) {
+            throw storageFailure(ex, tempUploadId);
+        }
+    }
+
+    private void validateTemporaryUpload(DocumentTempUploadEntity tempUpload, UUID actorId, Instant now) {
+        if (!tempUpload.getUploadedBy().equals(actorId)) {
+            throw DocumentFailures.forbidden(
+                    "TEMPORARY_UPLOAD_OWNERSHIP_DENIED",
+                    "Temporary upload is owned by another user. tempUploadId=" + tempUpload.getId()
+            );
+        }
+        if (!now.isBefore(tempUpload.getExpiresAt())) {
+            throw DocumentFailures.gone(
+                    "TEMPORARY_UPLOAD_EXPIRED",
+                    "Temporary upload has expired. tempUploadId=" + tempUpload.getId()
+            );
+        }
+    }
+
+    private DocumentStoragePort.DocumentObjectMetadata verifyTemporaryObject(DocumentTempUploadEntity tempUpload) {
+        try {
+            DocumentStoragePort.DocumentObjectMetadata actual = storagePort.inspectObject(tempUpload.getStorageObjectKey());
+            if (actual.fileSize() != tempUpload.getFileSize()
+                    || !Objects.equals(actual.mimeType(), tempUpload.getMimeType())) {
+                throw new DocumentStorageException("TEMPORARY_OBJECT_METADATA_MISMATCH", "Temporary upload metadata mismatch");
+            }
+            String checksum = storagePort.calculateObjectChecksum(
+                    tempUpload.getStorageObjectKey(),
+                    tempUpload.getChecksumAlgorithm()
+            );
+            if (!Objects.equals(checksum, tempUpload.getChecksumValue())) {
+                throw new DocumentStorageException("TEMPORARY_OBJECT_METADATA_MISMATCH", "Temporary upload metadata mismatch");
+            }
+            return new DocumentStoragePort.DocumentObjectMetadata(
+                    tempUpload.getMimeType(),
+                    tempUpload.getFileSize(),
+                    tempUpload.getChecksumAlgorithm(),
+                    tempUpload.getChecksumValue()
+            );
+        } catch (DocumentStorageException ex) {
+            throw storageFailure(ex, tempUpload.getId());
+        }
+    }
+
+    private RuntimeException storageFailure(DocumentStorageException ex, UUID tempUploadId) {
+        RuntimeException failure = DocumentTemporaryUploadService.storageFailure(ex);
+        if (failure instanceof ConflictException conflict) {
+            return new ConflictException(
+                    conflict.getErrorCode(),
+                    conflict.getMessageCode(),
+                    conflict.getDeveloperMessage(),
+                    conflict.getMessageArgs()
+            );
+        }
+        return failure;
+    }
+
+    private DocumentEntity lockDocument(UUID documentId) {
+        return documentRepository.lockById(documentId)
+                .orElseThrow(() -> DocumentFailures.notFound("DOCUMENT_NOT_FOUND", "Document was not found"));
+    }
+
+    private void requireVersion(long actualVersion, Long expectedVersion) {
+        if (expectedVersion == null || actualVersion != expectedVersion) {
+            throw DocumentFailures.conflict("DOCUMENT_VERSION_CONFLICT", "Document optimistic lock version conflict");
+        }
+    }
+
+    private LinkedDocumentContext requireActiveDocumentLink(UUID documentId, DocumentTargetContext targetContext) {
+        List<DocumentLinkEntity> links = linkRepository.findActiveTargetLinksForDocument(
+                documentId,
+                targetContext.targetType(),
+                targetContext.targetId(),
+                DocumentLifecycleStatus.ACTIVE,
+                DocumentLifecycleStatus.DELETED
+        );
+        if (links.isEmpty()) {
+            throw DocumentFailures.conflict("DOCUMENT_LINK_NOT_FOUND", "Document is not actively linked to the requested target context");
+        }
+        DocumentLinkEntity link = links.get(0);
+        DocumentVersionEntity version = versionRepository.findById(link.getDocumentVersionId())
+                .orElseThrow(() -> DocumentFailures.notFound("DOCUMENT_VERSION_NOT_FOUND", "Document version was not found"));
+        return new LinkedDocumentContext(version, link);
+    }
+
+    private void applyDocumentLifecycle(DocumentEntity document, LifecycleAction action, UUID actorId, Instant now) {
+        switch (action) {
+            case ACTIVATE -> document.activate(actorId, now);
+            case INACTIVATE -> document.inactivate(actorId, now);
+            case DELETE -> document.delete(actorId, now);
+            case RESTORE -> document.restore(actorId, now);
+        }
+    }
+
+    private void applyLinkLifecycle(DocumentLinkEntity link, LifecycleAction action, UUID actorId, Instant now) {
+        switch (action) {
+            case ACTIVATE -> link.activate(actorId, now);
+            case INACTIVATE -> link.inactivate(actorId, now);
+            case DELETE -> link.delete(actorId, now);
+            case RESTORE -> link.restore(actorId, now);
+        }
+    }
+
+    private String normalizeText(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private <T extends BusinessException> T withDraftContext(T failure, DraftContext context) {
+        if (context != null) {
+            failure.putErrorContext("tempUploadId", context.tempUploadId());
+            failure.putErrorContext("documentId", context.documentId());
+            failure.putErrorContext("draftType", context.draftType());
+        }
+        return failure;
+    }
+
+    private record DraftContext(UUID tempUploadId, UUID documentId, String draftType) {
+    }
+
+    private record AggregateDraftPlan(
+            Map<UUID, DraftContext> tempUploadContexts,
+            Map<UUID, ExistingDocumentDraft> existingDrafts
+    ) {
+    }
+
+    private record PreparedExistingMutation(
+            DocumentEntity document,
+            LinkedDocumentContext linkedContext,
+            NewDocumentVersionDraftRequest newVersion,
+            DocumentMetadataDraftRequest metadataUpdate,
+            DraftContext context
+    ) {
+    }
+
+    private static final class ExistingDocumentDraft {
+        private final UUID documentId;
+        private NewDocumentVersionDraftRequest newVersion;
+        private DocumentMetadataDraftRequest metadataUpdate;
+
+        private ExistingDocumentDraft(UUID documentId) {
+            this.documentId = documentId;
+        }
+
+        private UUID documentId() {
+            return documentId;
+        }
+
+        private NewDocumentVersionDraftRequest newVersion() {
+            return newVersion;
+        }
+
+        private void setNewVersion(NewDocumentVersionDraftRequest newVersion) {
+            this.newVersion = newVersion;
+        }
+
+        private DocumentMetadataDraftRequest metadataUpdate() {
+            return metadataUpdate;
+        }
+
+        private void setMetadataUpdate(DocumentMetadataDraftRequest metadataUpdate) {
+            this.metadataUpdate = metadataUpdate;
+        }
+
+        private Long expectedVersion() {
+            return newVersion != null ? newVersion.expectedDocumentVersion() : metadataUpdate.expectedVersion();
+        }
+
+        private DraftContext primaryContext() {
+            return newVersion != null
+                    ? new DraftContext(newVersion.tempUploadId(), documentId, "NEW_VERSION")
+                    : new DraftContext(null, documentId, "METADATA_UPDATE");
+        }
+    }
+
+    private record PromotedUpload(DocumentTempUploadEntity tempUpload, String permanentObjectKey) {
+    }
+
+    private record PreparedTemporaryUpload(
+            DocumentTempUploadEntity entity,
+            DocumentStoragePort.DocumentObjectMetadata metadata,
+            DraftContext context
+    ) {
+    }
+
+    private record LinkedDocumentContext(DocumentVersionEntity version, DocumentLinkEntity link) {
+    }
+
+    public static final class PreparedAggregateContext {
+        private DocumentAggregateBatchRequest batch;
+        private AggregateDraftPlan plan;
+        private Map<UUID, PreparedTemporaryUpload> tempUploads;
+        private UUID actorId;
+        private Instant preparedAt;
+        private boolean consumed;
+        private boolean expired;
+
+        private PreparedAggregateContext(
+                DocumentAggregateBatchRequest batch,
+                AggregateDraftPlan plan,
+                Map<UUID, PreparedTemporaryUpload> tempUploads,
+                UUID actorId,
+                Instant preparedAt
+        ) {
+            this.batch = batch;
+            this.plan = plan;
+            this.tempUploads = tempUploads;
+            this.actorId = actorId;
+            this.preparedAt = preparedAt;
+        }
+
+        private void consume() {
+            if (expired) {
+                throw new IllegalStateException("Prepared document aggregate transaction has completed");
+            }
+            if (consumed) {
+                throw new IllegalStateException("Prepared document aggregate has already been consumed");
+            }
+            consumed = true;
+        }
+
+        private void expire() {
+            expired = true;
+            batch = DocumentAggregateBatchRequest.empty();
+            plan = null;
+            tempUploads = Map.of();
+            actorId = null;
+            preparedAt = null;
+        }
+    }
+}

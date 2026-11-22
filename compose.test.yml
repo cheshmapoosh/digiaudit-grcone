@@ -1,16 +1,16 @@
-name: grcpc-test
+name: grcone-test
 
 services:
   oracle:
     image: ${ORACLE_IMAGE:-gvenzl/oracle-free:23-slim}
-    container_name: grcpc-test-oracle
+    container_name: ${GRCONE_TEST_PROJECT:-grcone-test}-oracle
     restart: unless-stopped
     environment:
       ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD:-oracle}
-      APP_USER: ${DB_USERNAME:-GRCPC}
-      APP_USER_PASSWORD: ${DB_PASSWORD:-grcpc}
+      APP_USER: ${DB_USERNAME:-${GRCONE_TEST_DB_USER:-GRCONE}}
+      APP_USER_PASSWORD: ${DB_PASSWORD:-${GRCONE_TEST_DB_PASSWORD:-grcone}}
     ports:
-      - "${ORACLE_PORT:-1521}:1521"
+      - "${GRCONE_TEST_BIND_PREFIX:-}${ORACLE_PORT:-1521}:1521"
     volumes:
       - oracle-data:/opt/oracle/oradata
     healthcheck:
@@ -22,22 +22,24 @@ services:
 
   minio:
     image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}
-    container_name: grcpc-test-minio
+    container_name: ${GRCONE_TEST_PROJECT:-grcone-test}-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${GRCONE_TEST_BIND_PREFIX:-}${MINIO_API_PORT:-9000}:9000"
+      - "${GRCONE_TEST_BIND_PREFIX:-}${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - type: bind
-        source: ./data/minio
+        source: ${GRCONE_TEST_DATA_DIR:-./data}/minio
         target: /data
 
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9000/minio/health/ready"]
+      test:
+        - CMD-SHELL
+        - curl --fail --silent http://localhost:9000/minio/health/ready || MC_HOST_health=http://127.0.0.1:9000 mc ready health
       interval: 10s
       timeout: 5s
       retries: 12
@@ -45,9 +47,9 @@ services:
 
   app:
     image: ${JAVA_IMAGE:-eclipse-temurin:21-jre-noble}
-    container_name: grcpc-test-app
+    container_name: ${GRCONE_TEST_PROJECT:-grcone-test}-app
     restart: unless-stopped
-    working_dir: /opt/grcpc
+    working_dir: /opt/grcone
     depends_on:
       oracle:
         condition: service_healthy
@@ -55,48 +57,48 @@ services:
         condition: service_healthy
     volumes:
       - type: bind
-        source: ./grcpc-app.jar
-        target: /opt/grcpc/grcpc-app.jar
+        source: ./grcone-app.jar
+        target: /opt/grcone/grcone-app.jar
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ./data/app/logs
-        target: /opt/grcpc/logs
+        source: ${GRCONE_TEST_DATA_DIR:-./data}/app/logs
+        target: /opt/grcone/logs
     environment:
       SERVER_PORT: 8080
 
       DB_URL: ${DB_URL:-jdbc:oracle:thin:@//oracle:1521/FREEPDB1}
-      DB_USERNAME: ${DB_USERNAME:-GRCPC}
-      DB_PASSWORD: ${DB_PASSWORD:-grcpc}
+      DB_USERNAME: ${DB_USERNAME:-${GRCONE_TEST_DB_USER:-GRCONE}}
+      DB_PASSWORD: ${DB_PASSWORD:-${GRCONE_TEST_DB_PASSWORD:-grcone}}
       DB_DRIVER_CLASS_NAME: oracle.jdbc.OracleDriver
-      DB_SCHEMA: ${DB_SCHEMA:-${DB_USERNAME:-GRCPC}}
+      DB_SCHEMA: ${DB_SCHEMA:-${DB_USERNAME:-${GRCONE_TEST_DB_USER:-GRCONE}}}
       FLYWAY_ENABLED: "true"
 
-      GRCPC_MINIO_ENABLED: "true"
-      GRCPC_MINIO_ENDPOINT: http://minio:9000
-      GRCPC_MINIO_PUBLIC_ENDPOINT: ${GRCPC_MINIO_PUBLIC_ENDPOINT:-http://${PUBLIC_HOST:-localhost}:${MINIO_API_PORT:-9000}}
-      GRCPC_MINIO_PRESIGN_REGION: ${GRCPC_MINIO_PRESIGN_REGION:-us-east-1}
-      GRCPC_MINIO_ACCESS_KEY: ${GRCPC_MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
-      GRCPC_MINIO_SECRET_KEY: ${GRCPC_MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
-      GRCPC_MINIO_BUCKET: ${GRCPC_MINIO_BUCKET:-grc-documents}
-      GRCPC_MINIO_PRESIGNED_URL_EXPIRY_MINUTES: "15"
-      GRCPC_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB: "25"
-      GRCPC_MINIO_TEMP_TTL_MINUTES: "120"
-      GRCPC_MINIO_TEMPORARY_PREFIX: master-data/document/temp
-      GRCPC_MINIO_PERMANENT_PREFIX: master-data/document/permanent
-      GRCPC_MINIO_LIFECYCLE_MODE: APPLY
-      GRCPC_MINIO_TEMP_EXPIRATION_ENABLED: "true"
-      GRCPC_MINIO_TEMP_EXPIRATION_RULE_ID: grcpc-temp-object-expiration
-      GRCPC_MINIO_TEMP_EXPIRATION_DAYS: "2"
+      GRCONE_MINIO_ENABLED: "true"
+      GRCONE_MINIO_ENDPOINT: http://minio:9000
+      GRCONE_MINIO_PUBLIC_ENDPOINT: ${GRCONE_MINIO_PUBLIC_ENDPOINT:-${DIGIGRCONE_MINIO_PUBLIC_ENDPOINT:-${GRCPC_MINIO_PUBLIC_ENDPOINT:-http://${PUBLIC_HOST:-localhost}:${MINIO_API_PORT:-9000}}}}
+      GRCONE_MINIO_PRESIGN_REGION: ${GRCONE_MINIO_PRESIGN_REGION:-${DIGIGRCONE_MINIO_PRESIGN_REGION:-${GRCPC_MINIO_PRESIGN_REGION:-us-east-1}}}
+      GRCONE_MINIO_ACCESS_KEY: ${GRCONE_MINIO_ACCESS_KEY:-${DIGIGRCONE_MINIO_ACCESS_KEY:-${GRCPC_MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}}}
+      GRCONE_MINIO_SECRET_KEY: ${GRCONE_MINIO_SECRET_KEY:-${DIGIGRCONE_MINIO_SECRET_KEY:-${GRCPC_MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}}}
+      GRCONE_MINIO_BUCKET: ${GRCONE_MINIO_BUCKET:-${DIGIGRCONE_MINIO_BUCKET:-${GRCPC_MINIO_BUCKET:-grc-documents}}}
+      GRCONE_MINIO_PRESIGNED_URL_EXPIRY_MINUTES: "15"
+      GRCONE_MINIO_DEFAULT_MAX_UPLOAD_SIZE_MB: "25"
+      GRCONE_MINIO_TEMP_TTL_MINUTES: "120"
+      GRCONE_MINIO_TEMPORARY_PREFIX: master-data/document/temp
+      GRCONE_MINIO_PERMANENT_PREFIX: master-data/document/permanent
+      GRCONE_MINIO_LIFECYCLE_MODE: ${GRCONE_MINIO_LIFECYCLE_MODE:-VALIDATE}
+      GRCONE_MINIO_TEMP_EXPIRATION_ENABLED: "true"
+      GRCONE_MINIO_TEMP_EXPIRATION_RULE_ID: grcone-temp-object-expiration
+      GRCONE_MINIO_TEMP_EXPIRATION_DAYS: "2"
 
-      APP_LOGGING_PATH: /opt/grcpc/logs
+      APP_LOGGING_PATH: /opt/grcone/logs
       ROOT_LOG_LEVEL: INFO
       APP_LOG_LEVEL: DEBUG
       JAVA_OPTS: -Xms256m -Xmx512m
     ports:
-      - "8080:8080"
-    command: ["sh", "-c", "exec java $${JAVA_OPTS:-} -jar /opt/grcpc/grcpc-app.jar"]
+      - "${GRCONE_TEST_BIND_PREFIX:-}${APP_PORT:-8080}:8080"
+    command: ["sh", "-c", "exec java $${JAVA_OPTS:-} -jar /opt/grcone/grcone-app.jar"]
 
 volumes:
   oracle-data:

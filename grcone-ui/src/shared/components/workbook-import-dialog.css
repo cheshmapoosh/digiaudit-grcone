@@ -1,0 +1,23 @@
+ui5-dialog.catalogObjectDialog.workbookImportDialog {
+  max-height: 88vh;
+  max-height: 88dvh;
+}
+
+.workbookImportDialog::part(content) {
+  padding: var(--sapContent_Space_Small);
+}
+
+.workbookImportContent {
+  gap: var(--sapContent_Space_Small);
+}
+
+.workbookImportActions {
+  gap: var(--sapContent_Space_Tiny);
+  min-inline-size: 0;
+}
+
+.workbookImportFileName {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  unicode-bidi: isolate;
+}

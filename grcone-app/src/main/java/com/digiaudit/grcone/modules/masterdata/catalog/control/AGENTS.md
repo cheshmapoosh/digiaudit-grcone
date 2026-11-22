@@ -1,0 +1,21 @@
+# AGENTS.md — Central Control V2
+
+This file extends `grcone-app/src/main/java/com/digiaudit/grcone/modules/masterdata/AGENTS.md` for the Central Control feature.
+
+The accepted project-owner correction in `grcone-docs/master-data/accepted-corrections/2026-08-17-central-control-design.md` is authoritative for this feature. It is a later accepted correction and therefore overrides older conflicting Control mock-up/catalog wording and the older business-table count where necessary.
+
+## Rules
+
+- `central_control_group` is the one approved additional business table for this correction.
+- Control Group is a recursive categorization hierarchy only. No Master Data entity other than `central_control` relates directly to Control Group.
+- `central_control.control_group_id` is the only direct Control Group membership relation in this slice.
+- Control Group structural mutations use the `CONTROL` hierarchy Guard Row.
+- Control Save manages `central_control_account_group` classifications. Account Group Save can also add existing Controls using the same classification, checks both areas' manage permissions, and advances each affected Control version. Prompt 7.6 adds the independent Control Objective/Account Group classification. The 2026-10-27 accepted correction replaces Coverage UI with direct reference Assignments; Control Save owns riskAssignments, controlObjectiveAssignments and requirementAssignments, never Coverage mutation.
+- Control Create/Update always use the `CONTROL` Guard. A Save unions `ACCOUNT_GROUP` for classification mutations, `RISK` for Risk Assignments, and `REGULATION` for Requirement Assignments with `CONTROL`, acquiring all keys lexically and retaining them in the revision context.
+- Control Create may additionally accept `initialSubprocess` (typed Subprocess ID/version). It requires PROCESS manage, a Control Group, and the lexical Guard union including `PROCESS`. Control, the existing Subprocess Control Scope, the touched Subprocess version, Documents, classifications/Assignments and one CENTRAL Revision share the same transaction. Scope validity is the endpoint intersection; normal Scope eligibility and uniqueness rules remain enforced. Existing Control links are still owned by Subprocess Save.
+- Keep Test Plan deferred: no table, FK, persisted free text, or API relation for Test Plan in this slice.
+- Do not add test Input/Output fields.
+- `control_relevance` is a controlled multi-value Control attribute, not a generic relation.
+- A customer test schema has already been delivered. Never edit or renumber migrations through `V1170`; evolve this feature only with later Flyway migrations, beginning at `V1171`.
+- Keep new schema columns compatible with previously delivered rows unless a later explicit migration decision says otherwise.
+- Do not add or run tests unless a later prompt explicitly authorizes them.

@@ -1,0 +1,36 @@
+.catalogCreateMenu > ui5-menu-item::part(content) {
+  font-size: var(--sapFontSize);
+  font-weight: normal;
+}
+
+.catalogImportResults {
+  gap: var(--sapContent_Space_Small);
+  min-inline-size: 0;
+}
+
+.catalogImportPageRows,
+.catalogImportTreeRow,
+.catalogImportTreeRow > ui5-text {
+  min-inline-size: 0;
+}
+
+.catalogImportTreeRow {
+  gap: var(--sapContent_Space_Small);
+}
+
+.catalogImportTreeRow > ui5-text {
+  unicode-bidi: isolate;
+}
+
+.catalogImportTreeRow > ui5-object-status {
+  flex-shrink: 0;
+}
+
+.catalogImportTreeTitle {
+  font-weight: var(--sapFontBoldWeight, 700);
+}
+
+.catalogImportTreeCode,
+.catalogImportTreeDetails {
+  color: var(--sapContent_LabelColor);
+}

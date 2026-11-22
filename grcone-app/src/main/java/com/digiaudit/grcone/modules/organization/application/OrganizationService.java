@@ -1,0 +1,963 @@
+package com.digiaudit.grcone.modules.organization.application;
+
+import com.digiaudit.grcone.common.exception.ConflictException;
+import com.digiaudit.grcone.common.exception.NotFoundException;
+import com.digiaudit.grcone.common.exception.UnprocessableEntityException;
+import com.digiaudit.grcone.modules.document.api.dto.DocumentCommandResponse;
+import com.digiaudit.grcone.modules.document.application.DocumentCommandService;
+import com.digiaudit.grcone.modules.document.domain.DocumentLinkTargetType;
+import com.digiaudit.grcone.modules.masterdata.local.api.dto.LocalContextDtos;
+import com.digiaudit.grcone.modules.masterdata.local.application.LocalContextService;
+import com.digiaudit.grcone.modules.masterdata.revision.application.MasterDataRevisionActorProvider;
+import com.digiaudit.grcone.modules.masterdata.revision.application.MasterDataRevisionCoordinator;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionExecutionContext;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionExecutionResult;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionMutationGuard;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionOperationResult;
+import com.digiaudit.grcone.modules.masterdata.revision.application.RevisionRequest;
+import com.digiaudit.grcone.modules.masterdata.revision.domain.RevisionContentResult;
+import com.digiaudit.grcone.modules.masterdata.revision.domain.RevisionEntityType;
+import com.digiaudit.grcone.modules.masterdata.revision.domain.RevisionOperationType;
+import com.digiaudit.grcone.modules.masterdata.shared.api.dto.MasterDataRevisionMutationResponse;
+import com.digiaudit.grcone.modules.organization.api.dto.OrganizationAggregateMutationResponse;
+import com.digiaudit.grcone.modules.masterdata.shared.application.MasterDataStructuralDependencyChecker;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataLifecycleStatus;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataHierarchyKey;
+import com.digiaudit.grcone.modules.masterdata.shared.domain.MasterDataMutationResult;
+import com.digiaudit.grcone.modules.organization.api.dto.CreateOrganizationRequest;
+import com.digiaudit.grcone.modules.organization.api.dto.MoveOrganizationRequest;
+import com.digiaudit.grcone.modules.organization.api.dto.OrganizationLifecycleCommandRequest;
+import com.digiaudit.grcone.modules.organization.api.dto.OrganizationResponse;
+import com.digiaudit.grcone.modules.organization.api.dto.OrganizationTreeNodeResponse;
+import com.digiaudit.grcone.modules.organization.api.dto.UpdateOrganizationRequest;
+import com.digiaudit.grcone.modules.organization.domain.OrganizationType;
+import com.digiaudit.grcone.modules.organization.domain.entity.OrganizationEntity;
+import com.digiaudit.grcone.modules.organization.domain.repository.OrganizationRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+
+@Service
+public class OrganizationService {
+    private static final MasterDataLifecycleStatus DELETED = MasterDataLifecycleStatus.DELETED;
+    private static final Comparator<OrganizationEntity> ORGANIZATION_ORDER = Comparator
+            .comparing(OrganizationEntity::getCode, String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(OrganizationEntity::getId);
+
+    private final com.digiaudit.grcone.modules.basicdata.application.BasicDataService basicData;
+    private final OrganizationRepository organizationRepository;
+    private final MasterDataRevisionCoordinator revisionCoordinator;
+    private final MasterDataRevisionActorProvider actorProvider;
+    private final Clock clock;
+    private final ObjectMapper objectMapper;
+    private final MasterDataStructuralDependencyChecker dependencyChecker;
+    private final RevisionMutationGuard mutationGuard;
+    private final DocumentCommandService documentCommandService;
+    private final OrganizationOwnerAssignmentService owners;
+    private final com.digiaudit.grcone.modules.masterdata.local.application.OrganizationLocalAggregateService localAggregate;
+
+    public OrganizationService(
+            com.digiaudit.grcone.modules.basicdata.application.BasicDataService basicData,
+            OrganizationRepository organizationRepository,
+            MasterDataRevisionCoordinator revisionCoordinator,
+            MasterDataRevisionActorProvider actorProvider,
+            @Qualifier("masterDataRevisionClock") Clock clock,
+            ObjectMapper objectMapper,
+            MasterDataStructuralDependencyChecker dependencyChecker,
+            RevisionMutationGuard mutationGuard,
+            DocumentCommandService documentCommandService,
+            OrganizationOwnerAssignmentService owners,
+            com.digiaudit.grcone.modules.masterdata.local.application.OrganizationLocalAggregateService localAggregate
+    ) {
+        this.basicData = basicData;
+        this.organizationRepository = Objects.requireNonNull(organizationRepository, "organizationRepository is required");
+        this.revisionCoordinator = Objects.requireNonNull(revisionCoordinator, "revisionCoordinator is required");
+        this.actorProvider = Objects.requireNonNull(actorProvider, "actorProvider is required");
+        this.clock = Objects.requireNonNull(clock, "clock is required");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper is required");
+        this.dependencyChecker = Objects.requireNonNull(dependencyChecker, "dependencyChecker is required");
+        this.mutationGuard = Objects.requireNonNull(mutationGuard, "mutationGuard is required");
+        this.documentCommandService = Objects.requireNonNull(documentCommandService, "documentCommandService is required");
+        this.owners = owners;
+        this.localAggregate = localAggregate;
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrganizationResponse> findAll(String lifecycleStatus) {
+        MasterDataLifecycleStatus requestedStatus = parseLifecycleFilter(lifecycleStatus);
+        List<OrganizationEntity> organizations = requestedStatus == null
+                ? organizationRepository.findByStatusNotOrderByCodeAscIdAsc(DELETED)
+                : organizationRepository.findByStatusOrderByCodeAscIdAsc(requestedStatus);
+        return organizations
+                .stream()
+                .sorted(ORGANIZATION_ORDER)
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrganizationTreeNodeResponse> findTree() {
+        return buildTree(organizationRepository.findByStatusNotOrderByCodeAscIdAsc(DELETED));
+    }
+
+    @Transactional(readOnly = true)
+    public OrganizationResponse findById(UUID id) {
+        return toResponse(findActiveReadable(id));
+    }
+
+    @Transactional
+    public OrganizationAggregateMutationResponse create(CreateOrganizationRequest request) {
+        localAggregate.lock(request);
+        String code = normalizeCode(request.code());
+        OrganizationGeneralInformation generalInformation = normalizeGeneralInformation(
+                request.name(),
+                request.organizationType(),
+                request.organizationTypeId(),
+                request.location(),
+                request.description(),
+                MasterDataLifecycleStatus.ACTIVE,
+                request.validFrom(),
+                request.validTo()
+        );
+        AtomicReference<List<DocumentCommandResponse>> finalizedDocuments = new AtomicReference<>(List.of());
+        AtomicReference<DocumentCommandService.PreparedAggregateContext> preparedDocumentState = new AtomicReference<>();
+        AtomicReference<OrganizationResponse> confirmed = new AtomicReference<>();
+        AtomicReference<com.digiaudit.grcone.modules.masterdata.local.application.OrganizationLocalAggregateService.Plan> preparedLocal = new AtomicReference<>();
+        RevisionExecutionResult result = revisionCoordinator.executeStructural(
+                    localAggregate.guards(request),
+                    RevisionRequest.central("Create organization " + code, "Organization structural create", null),
+                    context -> {
+                        mutationGuard.requireHierarchyGuard(context, MasterDataHierarchyKey.ORGANIZATION);
+                        DocumentCommandService.PreparedAggregateContext preparedDocuments =
+                                documentCommandService.prepareAggregate(request.documents());
+                        preparedDocumentState.set(preparedDocuments);
+                        RevisionOperationResult operation = createInsideRevision(
+                                context,
+                                code,
+                                request.parentOrganizationId(),
+                                List.of(),
+                                generalInformation
+                        );
+                        localAggregate.lockEndpoints(operation.primaryResult().entityId(), request);
+                        var preparedOwners = owners.prepare(context, operation.primaryResult().entityId(), request.ownerAssignments());
+                        preparedLocal.set(localAggregate.prepare(operation.primaryResult().entityId(), request));
+                        operation = appendOwners(context, operation, preparedOwners);
+                        confirmed.set(toResponse(findActiveReadable(operation.primaryResult().entityId())));
+                        return operation;
+                    }
+        );
+        // The CENTRAL header must exist before the immediate caused_by_revision FK is flushed by LOCAL.
+        // Both coordinator calls still participate in this protected outer transaction.
+        var local = localAggregate.apply(preparedLocal.get(), result.primaryResult().revisionId());
+        finalizedDocuments.set(documentCommandService.finalizePreparedAggregate(preparedDocumentState.get(),
+                DocumentLinkTargetType.ORGANIZATION, result.primaryResult().entityId()));
+        return aggregateResponse(result, finalizedDocuments.get(), confirmed.get(), local);
+    }
+
+    @Transactional
+    public OrganizationAggregateMutationResponse update(UUID organizationId, UpdateOrganizationRequest request) {
+        localAggregate.lock(request);
+        long expectedVersion = requireVersion(request.version());
+        OrganizationGeneralInformation generalInformation = normalizeGeneralInformation(
+                request.name(),
+                request.organizationType(),
+                request.organizationTypeId(),
+                request.location(),
+                request.description(),
+                requireUpdateStatus(request.status()),
+                request.validFrom(),
+                request.validTo()
+        );
+        AtomicReference<List<DocumentCommandResponse>> finalizedDocuments = new AtomicReference<>(List.of());
+        AtomicReference<DocumentCommandService.PreparedAggregateContext> preparedDocumentState = new AtomicReference<>();
+        AtomicReference<OrganizationResponse> confirmed = new AtomicReference<>();
+        AtomicReference<com.digiaudit.grcone.modules.masterdata.local.application.OrganizationLocalAggregateService.Plan> preparedLocal = new AtomicReference<>();
+        RevisionExecutionResult result = revisionCoordinator.executeStructural(
+                localAggregate.guards(request),
+                RevisionRequest.central(
+                        "Update organization " + organizationId,
+                        "Organization General Information update",
+                        null
+                ),
+                context -> {
+                    mutationGuard.requireHierarchyGuard(context, MasterDataHierarchyKey.ORGANIZATION);
+                    DocumentCommandService.PreparedAggregateContext preparedDocuments =
+                            documentCommandService.prepareAggregate(request.documents());
+                        preparedDocumentState.set(preparedDocuments);
+                    RevisionOperationResult operation = updateInsideRevision(
+                            context,
+                            organizationId,
+                            expectedVersion,
+                            request.parentOrganizationId(),
+                            List.of(),
+                            generalInformation
+                    );
+                    localAggregate.lockEndpoints(organizationId, request);
+                    var preparedOwners = owners.prepare(context, organizationId, request.ownerAssignments());
+                    preparedLocal.set(localAggregate.prepare(organizationId, request));
+                    operation = appendOwners(context, operation, preparedOwners);
+                    confirmed.set(toResponse(findActiveReadable(organizationId)));
+                    return operation;
+                }
+        );
+        // The CENTRAL header must exist before the immediate caused_by_revision FK is flushed by LOCAL.
+        // Both coordinator calls still participate in this protected outer transaction.
+        var local = localAggregate.apply(preparedLocal.get(), result.primaryResult().revisionId());
+        finalizedDocuments.set(documentCommandService.finalizePreparedAggregate(preparedDocumentState.get(),
+                DocumentLinkTargetType.ORGANIZATION, result.primaryResult().entityId()));
+        return aggregateResponse(result, finalizedDocuments.get(), confirmed.get(), local);
+    }
+
+    public MasterDataRevisionMutationResponse move(UUID organizationId, MoveOrganizationRequest request) {
+        long expectedVersion = requireVersion(request.version());
+        RevisionExecutionResult result = revisionCoordinator.executeStructural(
+                MasterDataHierarchyKey.ORGANIZATION,
+                RevisionRequest.central("Move organization " + organizationId, "Organization hierarchy move", null),
+                context -> moveInsideRevision(context, organizationId, expectedVersion, request.parentOrganizationId())
+        );
+        return MasterDataRevisionMutationResponse.from(result.primaryResult());
+    }
+
+    public MasterDataRevisionMutationResponse activate(UUID organizationId, OrganizationLifecycleCommandRequest request) {
+        return lifecycle(organizationId, request, RevisionOperationType.ACTIVATE);
+    }
+
+    public MasterDataRevisionMutationResponse inactivate(UUID organizationId, OrganizationLifecycleCommandRequest request) {
+        return lifecycle(organizationId, request, RevisionOperationType.INACTIVATE);
+    }
+
+    public MasterDataRevisionMutationResponse delete(UUID organizationId, OrganizationLifecycleCommandRequest request) {
+        return lifecycle(organizationId, request, RevisionOperationType.DELETE);
+    }
+
+    public MasterDataRevisionMutationResponse restore(UUID organizationId, OrganizationLifecycleCommandRequest request) {
+        return lifecycle(organizationId, request, RevisionOperationType.RESTORE);
+    }
+
+    private RevisionOperationResult createInsideRevision(
+            RevisionExecutionContext context,
+            String code,
+            UUID parentOrganizationId,
+            List<com.digiaudit.grcone.modules.organization.api.dto.OrganizationOwnerChange> ownerAssignments,
+            OrganizationGeneralInformation generalInformation
+    ) {
+        mutationGuard.requireHierarchyGuard(context, MasterDataHierarchyKey.ORGANIZATION);
+        UUID actorId = actorProvider.currentActorId();
+        Instant now = Instant.now(clock);
+        List<OrganizationEntity> hierarchy = organizationRepository.findAllByOrderByIdAsc();
+        Map<UUID, OrganizationEntity> byId = indexById(hierarchy);
+        OrganizationEntity entity = findByNormalizedCode(hierarchy, code);
+        UUID typeId = basicData.organizationType(generalInformation.organizationTypeId(), generalInformation.organizationType().wireValue(), entity == null ? null : entity.getOrganizationTypeId());
+
+        if (entity == null) {
+            UUID entityId = UUID.randomUUID();
+            validateParent(entityId, parentOrganizationId, byId);
+            OrganizationEntity created = OrganizationEntity.create(
+                    entityId,
+                    code,
+                    generalInformation.name(),
+                    OrganizationType.fromWireValue(basicData.legacyOrganizationCode(typeId)),
+                    parentOrganizationId,
+                    generalInformation.location(),
+                    generalInformation.description(),
+                    generalInformation.validFrom(),
+                    generalInformation.validTo(),
+                    actorId,
+                    now
+            );
+            created.setOrganizationTypeId(typeId);
+            OrganizationEntity saved = organizationRepository.saveAndFlush(created);
+            return completed(context, saved, RevisionOperationType.CREATE, null, null, ownerAssignments);
+        }
+
+        JsonNode before = snapshot(entity);
+        if (entity.getStatus() == MasterDataLifecycleStatus.ACTIVE) {
+            throw duplicateCode(code);
+        }
+
+        validateParent(entity.getId(), parentOrganizationId, byId);
+        RevisionOperationType operationType = entity.getStatus() == MasterDataLifecycleStatus.DELETED
+                ? RevisionOperationType.RESTORE
+                : RevisionOperationType.ACTIVATE;
+        long expectedVersion = entity.getVersion();
+        if (operationType == RevisionOperationType.RESTORE) {
+            entity.restoreFromCreate(
+                    generalInformation.name(),
+                    OrganizationType.fromWireValue(basicData.legacyOrganizationCode(typeId)),
+                    parentOrganizationId,
+                    generalInformation.location(),
+                    generalInformation.description(),
+                    generalInformation.validFrom(),
+                    generalInformation.validTo(),
+                    actorId,
+                    now
+            );
+        } else {
+            entity.reactivateFromCreate(
+                    generalInformation.name(),
+                    OrganizationType.fromWireValue(basicData.legacyOrganizationCode(typeId)),
+                    parentOrganizationId,
+                    generalInformation.location(),
+                    generalInformation.description(),
+                    generalInformation.validFrom(),
+                    generalInformation.validTo(),
+                    actorId,
+                    now
+            );
+        }
+
+        entity.setOrganizationTypeId(typeId);
+        OrganizationEntity saved = organizationRepository.saveAndFlush(entity);
+        return completed(context, saved, operationType, expectedVersion, before, ownerAssignments);
+    }
+
+    private RevisionOperationResult updateInsideRevision(
+            RevisionExecutionContext context,
+            UUID organizationId,
+            long expectedVersion,
+            UUID parentOrganizationId,
+            List<com.digiaudit.grcone.modules.organization.api.dto.OrganizationOwnerChange> ownerAssignments,
+            OrganizationGeneralInformation generalInformation
+    ) {
+        mutationGuard.requireHierarchyGuard(context, MasterDataHierarchyKey.ORGANIZATION);
+        Map<UUID, OrganizationEntity> byId = indexById(organizationRepository.findAllByOrderByIdAsc());
+        OrganizationEntity entity = requireFromSnapshot(byId, organizationId);
+        assertVersion(entity, expectedVersion);
+        requireMutable(entity);
+        validateParent(organizationId, parentOrganizationId, byId);
+        JsonNode before = snapshot(entity);
+        UUID typeId = basicData.organizationType(generalInformation.organizationTypeId(), generalInformation.organizationType().wireValue(), entity.getOrganizationTypeId());
+        entity.setOrganizationTypeId(typeId);
+        entity.updateGeneralInformation(
+                generalInformation.name(),
+                OrganizationType.fromWireValue(basicData.legacyOrganizationCode(typeId)),
+                parentOrganizationId,
+                generalInformation.location(),
+                generalInformation.description(),
+                generalInformation.status(),
+                generalInformation.validFrom(),
+                generalInformation.validTo(),
+                actorProvider.currentActorId(),
+                Instant.now(clock)
+        );
+        OrganizationEntity saved = organizationRepository.saveAndFlush(entity);
+        return completed(context, saved, RevisionOperationType.UPDATE, expectedVersion, before, ownerAssignments);
+    }
+
+    private RevisionOperationResult appendOwners(RevisionExecutionContext context, RevisionOperationResult operation, OrganizationOwnerAssignmentService.Plan plan) {
+        var ownerContents = owners.apply(context, plan);
+        if (ownerContents.isEmpty()) return operation;
+        var source = operation.contentResults().get(0);
+        var entity = findActiveReadable(operation.primaryResult().entityId());
+        var contents = new ArrayList<RevisionContentResult>();
+        contents.add(RevisionContentResult.completed(source.entityType(), source.entityId(), source.operationType(), source.expectedVersion(),
+            source.beforeSnapshot(), snapshot(entity), entity.getVersion(), validationSnapshot()));
+        contents.addAll(ownerContents);
+        return RevisionOperationResult.completed(context, operation.primaryResult(), contents);
+    }
+
+    private OrganizationAggregateMutationResponse aggregateResponse(RevisionExecutionResult result,
+            List<DocumentCommandResponse> documents, OrganizationResponse organization,
+            com.digiaudit.grcone.modules.masterdata.local.api.dto.OrganizationLocalDtos.Result local) {
+        var primary = result.primaryResult();
+        return new OrganizationAggregateMutationResponse(primary.entityId(), primary.revisionId(), primary.version(), documents, organization,
+            local == null || local.contexts().isEmpty() ? null : new LocalContextDtos.Selection(local.revisionId(), local.contexts()), local);
+    }
+
+    private RevisionOperationResult moveInsideRevision(
+            RevisionExecutionContext context,
+            UUID organizationId,
+            long expectedVersion,
+            UUID parentOrganizationId
+    ) {
+        mutationGuard.requireHierarchyGuard(context, MasterDataHierarchyKey.ORGANIZATION);
+        List<OrganizationEntity> hierarchy = organizationRepository.findAllByOrderByIdAsc();
+        Map<UUID, OrganizationEntity> byId = indexById(hierarchy);
+        OrganizationEntity entity = requireFromSnapshot(byId, organizationId);
+        assertVersion(entity, expectedVersion);
+        requireMutable(entity);
+        if (Objects.equals(entity.getParentOrganizationId(), parentOrganizationId)) {
+            throw invalidHierarchyMove();
+        }
+        JsonNode before = snapshot(entity);
+        validateParent(organizationId, parentOrganizationId, byId);
+        entity.move(parentOrganizationId, actorProvider.currentActorId(), Instant.now(clock));
+        OrganizationEntity saved = organizationRepository.saveAndFlush(entity);
+        return completed(context, saved, RevisionOperationType.UPDATE, expectedVersion, before);
+    }
+
+    private MasterDataRevisionMutationResponse lifecycle(
+            UUID organizationId,
+            OrganizationLifecycleCommandRequest request,
+            RevisionOperationType operationType
+    ) {
+        long expectedVersion = requireVersion(request.version());
+        RevisionRequest revisionRequest = RevisionRequest.central(
+                operationType.name() + " organization " + organizationId,
+                "Organization lifecycle command",
+                null
+        );
+        RevisionExecutionResult result = operationType == RevisionOperationType.DELETE
+                || operationType == RevisionOperationType.RESTORE
+                ? revisionCoordinator.executeStructural(
+                        MasterDataHierarchyKey.ORGANIZATION,
+                        revisionRequest,
+                        context -> lifecycleInsideRevision(context, organizationId, expectedVersion, operationType)
+                )
+                : revisionCoordinator.execute(
+                        revisionRequest,
+                        context -> lifecycleInsideRevision(context, organizationId, expectedVersion, operationType)
+                );
+        return MasterDataRevisionMutationResponse.from(result.primaryResult());
+    }
+
+    private RevisionOperationResult lifecycleInsideRevision(
+            RevisionExecutionContext context,
+            UUID organizationId,
+            long expectedVersion,
+            RevisionOperationType operationType
+    ) {
+        Map<UUID, OrganizationEntity> hierarchyById = null;
+        OrganizationEntity entity;
+        if (operationType == RevisionOperationType.DELETE || operationType == RevisionOperationType.RESTORE) {
+            mutationGuard.requireHierarchyGuard(context, MasterDataHierarchyKey.ORGANIZATION);
+            hierarchyById = indexById(organizationRepository.findAllByOrderByIdAsc());
+            entity = requireFromSnapshot(hierarchyById, organizationId);
+        } else {
+            entity = lockExisting(organizationId, "ORGANIZATION_NOT_FOUND");
+        }
+        assertVersion(entity, expectedVersion);
+        validateLifecycleTransition(entity, operationType);
+        if (operationType == RevisionOperationType.DELETE) {
+            validateDeleteDependencies(entity.getId(), hierarchyById);
+        }
+        if (operationType == RevisionOperationType.RESTORE) {
+            validateRestoreParent(entity, hierarchyById);
+            validateValidity(entity.getValidFrom(), entity.getValidTo());
+        }
+
+        JsonNode before = snapshot(entity);
+        UUID actorId = actorProvider.currentActorId();
+        Instant now = Instant.now(clock);
+        switch (operationType) {
+            case ACTIVATE -> entity.activate(actorId, now);
+            case INACTIVATE -> entity.inactivate(actorId, now);
+            case DELETE -> entity.delete(actorId, now);
+            case RESTORE -> entity.restore(actorId, now);
+            default -> throw new IllegalArgumentException("Unsupported organization lifecycle operation");
+        }
+        OrganizationEntity saved = organizationRepository.saveAndFlush(entity);
+        return completed(context, saved, operationType, expectedVersion, before);
+    }
+
+    private RevisionOperationResult completed(
+            RevisionExecutionContext context,
+            OrganizationEntity entity,
+            RevisionOperationType operationType,
+            Long expectedVersion,
+            JsonNode beforeSnapshot
+    ) {
+        return completed(context, entity, operationType, expectedVersion, beforeSnapshot, List.of());
+    }
+
+    private RevisionOperationResult completed(RevisionExecutionContext context, OrganizationEntity entity,
+            RevisionOperationType operationType, Long expectedVersion, JsonNode beforeSnapshot,
+            List<com.digiaudit.grcone.modules.organization.api.dto.OrganizationOwnerChange> ownerAssignments) {
+        var assignmentContents = owners.apply(context, entity.getId(), ownerAssignments);
+        MasterDataMutationResult primary = new MasterDataMutationResult(entity.getId(), context.revisionId(), entity.getVersion());
+        List<RevisionContentResult> contents = new ArrayList<>();
+        contents.add(RevisionContentResult.completed(RevisionEntityType.ORGANIZATION, entity.getId(), operationType,
+                expectedVersion, beforeSnapshot, snapshot(entity), entity.getVersion(), validationSnapshot()));
+        contents.addAll(assignmentContents);
+        return RevisionOperationResult.completed(context, primary, contents);
+    }
+
+    private void validateParent(
+            UUID organizationId,
+            UUID parentOrganizationId,
+            Map<UUID, OrganizationEntity> byId
+    ) {
+        if (parentOrganizationId == null) {
+            return;
+        }
+        if (organizationId.equals(parentOrganizationId)) {
+            throw hierarchySelfParent();
+        }
+        OrganizationEntity parent = byId.get(parentOrganizationId);
+        if (parent == null || parent.getStatus() == DELETED) {
+            throw new NotFoundException("PARENT_ORGANIZATION_NOT_FOUND", "error.masterdata.v2.parentOrganizationNotFound", "Parent organization not found: " + parentOrganizationId, parentOrganizationId);
+        }
+        validateNoCycle(organizationId, parentOrganizationId, byId);
+    }
+
+    private void validateRestoreParent(OrganizationEntity entity, Map<UUID, OrganizationEntity> byId) {
+        UUID parentOrganizationId = entity.getParentOrganizationId();
+        if (parentOrganizationId == null) {
+            return;
+        }
+        OrganizationEntity parent = byId.get(parentOrganizationId);
+        if (parent == null || parent.getStatus() == DELETED) {
+            throw new NotFoundException("PARENT_ORGANIZATION_NOT_FOUND", "error.masterdata.v2.parentOrganizationNotFound", "Parent organization not found: " + parentOrganizationId, parentOrganizationId);
+        }
+    }
+
+    private void validateNoCycle(UUID organizationId, UUID parentOrganizationId, Map<UUID, OrganizationEntity> byId) {
+        Set<UUID> visited = new HashSet<>();
+        UUID current = parentOrganizationId;
+        while (current != null) {
+            if (!visited.add(current)) {
+                throw hierarchyCycle();
+            }
+            if (organizationId.equals(current)) {
+                throw hierarchyCycle();
+            }
+            OrganizationEntity parent = byId.get(current);
+            if (parent == null || parent.getStatus() == DELETED) {
+                throw new NotFoundException("PARENT_ORGANIZATION_NOT_FOUND", "error.masterdata.v2.parentOrganizationNotFound", "Parent organization not found: " + current, current);
+            }
+            current = parent.getParentOrganizationId();
+        }
+    }
+
+    private void validateDeleteDependencies(
+            UUID organizationId,
+            Map<UUID, OrganizationEntity> byId
+    ) {
+        if (byId.values().stream().anyMatch(organization ->
+                organization.getStatus() != DELETED
+                        && organizationId.equals(organization.getParentOrganizationId()))) {
+            throw new ConflictException("DEPENDENT_CHILDREN_EXIST", "error.masterdata.v2.dependentChildrenExist", "Organization has child organizations: " + organizationId, organizationId);
+        }
+        if (dependencyChecker.organizationHasApprovedDependencies(organizationId)) {
+            throw new ConflictException("DEPENDENT_MASTER_DATA_EXISTS", "error.masterdata.v2.dependentMasterDataExists", "Organization has dependent Master Data references: " + organizationId, organizationId);
+        }
+    }
+
+    private OrganizationEntity lockExisting(UUID organizationId, String errorCode) {
+        OrganizationEntity entity = organizationRepository.lockById(organizationId)
+                .orElseThrow(() -> new NotFoundException(errorCode, "error.masterdata.v2.organizationNotFound", "Organization not found: " + organizationId, organizationId));
+        return entity;
+    }
+
+    private OrganizationEntity requireFromSnapshot(
+            Map<UUID, OrganizationEntity> byId,
+            UUID organizationId
+    ) {
+        OrganizationEntity entity = byId.get(organizationId);
+        if (entity == null) {
+            throw new NotFoundException(
+                    "ORGANIZATION_NOT_FOUND",
+                    "error.masterdata.v2.organizationNotFound",
+                    "Organization not found: " + organizationId,
+                    organizationId
+            );
+        }
+        return entity;
+    }
+
+    private void requireMutable(OrganizationEntity entity) {
+        if (entity.getStatus() == DELETED) {
+            throw new NotFoundException("ORGANIZATION_NOT_FOUND", "error.masterdata.v2.organizationNotFound", "Organization not found: " + entity.getId(), entity.getId());
+        }
+    }
+
+    private void validateLifecycleTransition(OrganizationEntity entity, RevisionOperationType operationType) {
+        MasterDataLifecycleStatus current = entity.getStatus();
+        if (current == DELETED && operationType != RevisionOperationType.RESTORE) {
+            throw new NotFoundException("ORGANIZATION_NOT_FOUND", "error.masterdata.v2.organizationNotFound", "Organization not found: " + entity.getId(), entity.getId());
+        }
+
+        boolean valid = switch (operationType) {
+            case ACTIVATE -> current == MasterDataLifecycleStatus.INACTIVE;
+            case INACTIVATE -> current == MasterDataLifecycleStatus.ACTIVE;
+            case DELETE -> current == MasterDataLifecycleStatus.ACTIVE || current == MasterDataLifecycleStatus.INACTIVE;
+            case RESTORE -> current == DELETED;
+            default -> false;
+        };
+        if (!valid) {
+            throw new UnprocessableEntityException(
+                    "INVALID_LIFECYCLE_TRANSITION",
+                    "error.masterdata.v2.invalidLifecycleTransition",
+                    "Invalid organization lifecycle transition from " + current + " using " + operationType
+            );
+        }
+    }
+
+    private OrganizationEntity findActiveReadable(UUID id) {
+        return organizationRepository.findByIdAndStatusNot(id, DELETED)
+                .orElseThrow(() -> new NotFoundException("ORGANIZATION_NOT_FOUND", "error.masterdata.v2.organizationNotFound", "Organization not found: " + id, id));
+    }
+
+    private void assertVersion(OrganizationEntity entity, long expectedVersion) {
+        if (entity.getVersion() != expectedVersion) {
+            throw new ConflictException("VERSION_CONFLICT", "error.masterdata.v2.versionConflict", "Organization version conflict: " + entity.getId(), entity.getId());
+        }
+    }
+
+    private long requireVersion(Long version) {
+        if (version == null || version < 0) {
+            throw new ConflictException("VERSION_CONFLICT", "error.masterdata.v2.versionConflict", "Expected version is required", version);
+        }
+        return version;
+    }
+
+    private String normalizeCode(String code) {
+        if (code == null || code.isBlank()) {
+            throw new UnprocessableEntityException(
+                    "INVALID_ORGANIZATION_CODE",
+                    "error.masterdata.v2.organizationCodeRequired",
+                    "Organization code is required"
+            );
+        }
+        String normalized = code.trim().toUpperCase(Locale.ROOT);
+        if (normalized.getBytes(StandardCharsets.UTF_8).length > 64) {
+            throw new UnprocessableEntityException(
+                    "INVALID_CODE_LENGTH",
+                    "error.masterdata.v2.organizationCodeLength",
+                    "Organization code exceeds 64 UTF-8 bytes"
+            );
+        }
+        return normalized;
+    }
+
+    private void validateValidity(LocalDate validFrom, LocalDate validTo) {
+        if (validFrom != null && validTo != null && validTo.isBefore(validFrom)) {
+            throw new UnprocessableEntityException(
+                    "INVALID_VALIDITY_RANGE",
+                    "error.masterdata.v2.dateRangeInvalid",
+                    "Organization validity range is invalid"
+            );
+        }
+    }
+
+    private OrganizationGeneralInformation normalizeGeneralInformation(
+            String name,
+            OrganizationType organizationType,
+            UUID organizationTypeId,
+            String location,
+            String description,
+            MasterDataLifecycleStatus status,
+            LocalDate validFrom,
+            LocalDate validTo
+    ) {
+        String normalizedName = normalizeName(name);
+        OrganizationType normalizedType = requireOrganizationType(organizationType);
+        String normalizedLocation = normalizeLocation(location);
+        String normalizedDescription = normalizeDescription(description);
+        validateValidity(validFrom, validTo);
+        return new OrganizationGeneralInformation(
+                normalizedName,
+                normalizedType,
+                organizationTypeId,
+                normalizedLocation,
+                normalizedDescription,
+                status,
+                validFrom,
+                validTo
+        );
+    }
+
+    private String normalizeName(String name) {
+        if (name == null || name.isBlank()) {
+            throw new UnprocessableEntityException(
+                    "INVALID_ORGANIZATION_NAME",
+                    "error.masterdata.v2.organizationNameRequired",
+                    "Organization name is required"
+            );
+        }
+        String normalized = name.trim();
+        if (normalized.length() > 255) {
+            throw new UnprocessableEntityException(
+                    "INVALID_ORGANIZATION_NAME",
+                    "error.masterdata.v2.organizationNameLength",
+                    "Organization name exceeds 255 characters"
+            );
+        }
+        return normalized;
+    }
+
+    private OrganizationType requireOrganizationType(OrganizationType organizationType) {
+        return organizationType == null ? OrganizationType.OTHER : organizationType;
+    }
+
+    private String normalizeLocation(String location) {
+        if (location == null || location.isBlank()) {
+            return null;
+        }
+        String normalized = location.trim();
+        if (normalized.length() > 255) {
+            throw new UnprocessableEntityException(
+                    "INVALID_ORGANIZATION_LOCATION",
+                    "error.masterdata.v2.organizationLocationLength",
+                    "Organization location exceeds 255 characters"
+            );
+        }
+        return normalized;
+    }
+
+    private String normalizeDescription(String description) {
+        return description == null || description.isBlank() ? null : description.trim();
+    }
+
+    private MasterDataLifecycleStatus requireUpdateStatus(MasterDataLifecycleStatus status) {
+        if (status == MasterDataLifecycleStatus.ACTIVE || status == MasterDataLifecycleStatus.INACTIVE) {
+            return status;
+        }
+        throw new UnprocessableEntityException(
+                "INVALID_LIFECYCLE_TRANSITION",
+                "error.masterdata.v2.invalidLifecycleTransition",
+                "Organization Update accepts only ACTIVE or INACTIVE"
+        );
+    }
+
+    private ConflictException duplicateCode(String code) {
+        return new ConflictException("DUPLICATE_ORGANIZATION_CODE", "error.masterdata.v2.duplicateOrganizationCode", "Duplicate organization code: " + code, code);
+    }
+
+    private UnprocessableEntityException hierarchySelfParent() {
+        return new UnprocessableEntityException("HIERARCHY_SELF_PARENT", "error.masterdata.v2.hierarchySelfParent", "Organization cannot parent itself");
+    }
+
+    private UnprocessableEntityException hierarchyCycle() {
+        return new UnprocessableEntityException("HIERARCHY_CYCLE", "error.masterdata.v2.hierarchyCycle", "Organization hierarchy cycle detected");
+    }
+
+    private UnprocessableEntityException invalidHierarchyMove() {
+        return new UnprocessableEntityException(
+                "INVALID_HIERARCHY_MOVE",
+                "error.masterdata.v2.invalidHierarchyMove",
+                "Organization move destination must differ from its current parent"
+        );
+    }
+
+    private MasterDataLifecycleStatus parseLifecycleFilter(String lifecycleStatus) {
+        if (lifecycleStatus == null) {
+            return null;
+        }
+        if (DELETED.name().equals(lifecycleStatus)) {
+            return DELETED;
+        }
+        throw new UnprocessableEntityException(
+                "INVALID_LIFECYCLE_FILTER",
+                "error.masterdata.v2.invalidLifecycleFilter",
+                "Only the deleted lifecycle filter is supported"
+        );
+    }
+
+    private OrganizationEntity findByNormalizedCode(
+            List<OrganizationEntity> organizations,
+            String code
+    ) {
+        return organizations.stream()
+                .filter(organization -> organization.getCode().equalsIgnoreCase(code))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Map<UUID, OrganizationEntity> indexById(List<OrganizationEntity> organizations) {
+        Map<UUID, OrganizationEntity> byId = new HashMap<>();
+        for (OrganizationEntity organization : organizations) {
+            byId.put(organization.getId(), organization);
+        }
+        return byId;
+    }
+
+    private List<OrganizationTreeNodeResponse> buildTree(List<OrganizationEntity> entities) {
+        Map<UUID, MutableOrganizationTreeNode> nodes = new HashMap<>();
+        for (OrganizationEntity entity : entities) {
+            nodes.put(entity.getId(), new MutableOrganizationTreeNode(entity));
+        }
+        List<MutableOrganizationTreeNode> roots = new ArrayList<>();
+        for (OrganizationEntity entity : entities) {
+            MutableOrganizationTreeNode node = nodes.get(entity.getId());
+            UUID parentId = entity.getParentOrganizationId();
+            if (parentId == null) {
+                roots.add(node);
+                continue;
+            }
+            MutableOrganizationTreeNode parent = nodes.get(parentId);
+            if (parent == null) {
+                throw new UnprocessableEntityException("HIERARCHY_DEPTH_INVALID", "error.masterdata.v2.hierarchyDepthInvalid", "Organization hierarchy has a missing non-deleted parent: " + parentId, parentId);
+            }
+            parent.children.add(node);
+        }
+        detectTreeCycles(nodes);
+        roots.sort(MutableOrganizationTreeNode.ORDER);
+        return roots.stream().map(this::toTreeResponse).toList();
+    }
+
+    private void detectTreeCycles(Map<UUID, MutableOrganizationTreeNode> nodes) {
+        Set<UUID> visited = new HashSet<>();
+        Set<UUID> visiting = new HashSet<>();
+        for (UUID id : nodes.keySet()) {
+            detectTreeCycles(id, nodes, visited, visiting);
+        }
+    }
+
+    private void detectTreeCycles(
+            UUID id,
+            Map<UUID, MutableOrganizationTreeNode> nodes,
+            Set<UUID> visited,
+            Set<UUID> visiting
+    ) {
+        if (visited.contains(id)) {
+            return;
+        }
+        if (!visiting.add(id)) {
+            throw hierarchyCycle();
+        }
+        OrganizationEntity entity = nodes.get(id).entity;
+        UUID parentId = entity.getParentOrganizationId();
+        if (parentId != null && nodes.containsKey(parentId)) {
+            detectTreeCycles(parentId, nodes, visited, visiting);
+        }
+        visiting.remove(id);
+        visited.add(id);
+    }
+
+    private OrganizationTreeNodeResponse toTreeResponse(MutableOrganizationTreeNode node) {
+        node.children.sort(MutableOrganizationTreeNode.ORDER);
+        return new OrganizationTreeNodeResponse(
+                node.entity.getId(),
+                node.entity.getCode(),
+                node.entity.getName(),
+                node.entity.getOrganizationType(),
+                node.entity.getOrganizationTypeId(),
+                basicData.name(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.ORGANIZATION_TYPE, node.entity.getOrganizationTypeId()),
+                node.entity.getParentOrganizationId(),
+                node.entity.getName(),
+                node.entity.getStatus(),
+                node.entity.getValidFrom(),
+                node.entity.getValidTo(),
+                node.entity.getVersion(),
+                node.children.stream().map(this::toTreeResponse).toList()
+        );
+    }
+
+    private OrganizationResponse toResponse(OrganizationEntity entity) {
+        return new OrganizationResponse(
+                entity.getId(),
+                entity.getCode(),
+                entity.getName(),
+                entity.getOrganizationType(),
+                entity.getOrganizationTypeId(),
+                basicData.name(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.ORGANIZATION_TYPE, entity.getOrganizationTypeId()),
+                entity.getParentOrganizationId(),
+                entity.getName(),
+                entity.getStatus(),
+                entity.getLocation(),
+                entity.getDescription(),
+                entity.getValidFrom(),
+                entity.getValidTo(),
+                entity.getVersion(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt(),
+                entity.getCreatedBy(),
+                entity.getUpdatedBy(),
+                entity.getDeletedAt(),
+                entity.getDeletedBy(), owners.list(entity.getId())
+        );
+    }
+
+
+    public record OwnerOption(UUID id, String displayLabel, String username, String roleCode) {}
+    @Transactional(readOnly = true)
+    public List<com.digiaudit.grcone.modules.organization.api.dto.OrganizationOwnerView> deletedOwners(UUID organizationId) {
+        findActiveReadable(organizationId);
+        return owners.list(organizationId, true);
+    }
+    @Transactional(readOnly = true)
+    public List<OwnerOption> ownerOptions() {
+        return owners.options().stream().map(option -> new OwnerOption(option.id(), option.displayLabel(), option.username(), option.roleCode())).toList();
+    }
+
+    /** Current tree only: moving a node immediately changes its inherited ownership scope. */
+    @Transactional(readOnly = true)
+    public Set<UUID> ownedOrganizationIds(UUID userId) {
+        var hierarchy = organizationRepository.findByStatusNotOrderByCodeAscIdAsc(DELETED);
+        Set<UUID> result = new HashSet<>();
+        var direct = owners.directlyOwned(userId);
+        hierarchy.stream().filter(o -> direct.contains(o.getId())).forEach(o -> result.add(o.getId()));
+        boolean changed;
+        do {
+            changed = false;
+            for (var node : hierarchy) if (result.contains(node.getParentOrganizationId())) changed |= result.add(node.getId());
+        } while (changed);
+        return Set.copyOf(result);
+    }
+
+    private JsonNode snapshot(OrganizationEntity entity) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("id", entity.getId());
+        snapshot.put("code", entity.getCode());
+        snapshot.put("name", entity.getName());
+        snapshot.put("organizationType", entity.getOrganizationType().wireValue());
+        snapshot.put("organizationTypeId", entity.getOrganizationTypeId());
+        snapshot.put("organizationTypeName", basicData.name(com.digiaudit.grcone.modules.basicdata.domain.BasicDataKind.ORGANIZATION_TYPE, entity.getOrganizationTypeId()));
+        snapshot.put("parentOrganizationId", entity.getParentOrganizationId());
+        snapshot.put("profileId", entity.getProfileId());
+        snapshot.put("ownerAssignments", owners.list(entity.getId()));
+        snapshot.put("displayLabel", entity.getName());
+        snapshot.put("status", entity.getStatus().wireValue());
+        snapshot.put("location", entity.getLocation());
+        snapshot.put("description", entity.getDescription());
+        snapshot.put("validFrom", entity.getValidFrom());
+        snapshot.put("validTo", entity.getValidTo());
+        snapshot.put("version", entity.getVersion());
+        snapshot.put("createdAt", entity.getCreatedAt());
+        snapshot.put("updatedAt", entity.getUpdatedAt());
+        snapshot.put("createdBy", entity.getCreatedBy());
+        snapshot.put("updatedBy", entity.getUpdatedBy());
+        snapshot.put("deletedAt", entity.getDeletedAt());
+        snapshot.put("deletedBy", entity.getDeletedBy());
+        return objectMapper.valueToTree(snapshot);
+    }
+
+    private JsonNode validationSnapshot() {
+        return objectMapper.valueToTree(Map.of("validated", true));
+    }
+
+    private record OrganizationGeneralInformation(
+            String name,
+            OrganizationType organizationType,
+            UUID organizationTypeId,
+            String location,
+            String description,
+            MasterDataLifecycleStatus status,
+            LocalDate validFrom,
+            LocalDate validTo
+    ) {
+    }
+
+    private static final class MutableOrganizationTreeNode {
+        private static final Comparator<MutableOrganizationTreeNode> ORDER = Comparator
+                .comparing((MutableOrganizationTreeNode node) -> node.entity.getCode(), String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(node -> node.entity.getId());
+
+        private final OrganizationEntity entity;
+        private final List<MutableOrganizationTreeNode> children = new ArrayList<>();
+
+        private MutableOrganizationTreeNode(OrganizationEntity entity) {
+            this.entity = entity;
+        }
+    }
+}

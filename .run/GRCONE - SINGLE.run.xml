@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="GRCONE - SINGLE" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
+    <module name="grcone-app" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.digiaudit.grcone.GrconeApiApplication" />
+    <classpathModifications>
+      <entry path="$PROJECT_DIR$/grcone-app/src/main/edition/single" />
+    </classpathModifications>
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

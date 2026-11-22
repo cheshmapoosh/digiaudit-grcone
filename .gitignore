@@ -1,15 +1,18 @@
 /.idea/
 /logs/
-/grcpc-app/logs/
+/grcone-app/logs/
 # Local Docker Compose test runtime files
 /.docker/
-# Local boot jar used by grcpc-app.test.bat test runner
-/grcpc-app.jar
+# Local boot jar used by grcone-app.test.bat test runner
+/grcone-app.jar
 /data/
 # Local stage credentials
 /stage.env
 /prod.env
 /dev.env
+/dev-local.properties
 /test.env
+/grcone-ui/.env
+/.grcone-fresh-test/
 /tls/
 /secrets/
